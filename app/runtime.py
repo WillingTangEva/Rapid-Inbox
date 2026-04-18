@@ -15,6 +15,7 @@ from app.ingest.queue import ParseQueue, ParseTask
 from app.ingest.storage import FileStorage, utc_now
 from app.services.domains import DomainService
 from app.smtp.live_state import LiveState
+from app.smtp.matcher import DomainMatcher, DomainRule
 
 
 class RapidInboxRuntime:
@@ -107,11 +108,13 @@ class RapidInboxRuntime:
             matches.append((rcpt_to, match))
 
         raw_path, raw_sha256, raw_size_bytes = self.storage.write_raw_message(message_id, received_at, content)
+        recipient_recovery_payloads = [self._recovery_recipient_payload(rcpt_to, match) for rcpt_to, match in matches]
         manifest_payload = {
             "message_id": message_id,
             "smtp_session_id": smtp_session_id,
             "envelope_from": envelope_from,
             "rcpt_tos": list(rcpt_tos),
+            "recipients": recipient_recovery_payloads,
             "received_at": received_at,
             "raw_path": raw_path,
             "raw_sha256": raw_sha256,
@@ -435,7 +438,7 @@ class RapidInboxRuntime:
         raw_sha256 = str(manifest["raw_sha256"])
         raw_size_bytes = int(manifest["raw_size_bytes"])
         envelope_from = manifest.get("envelope_from")
-        rcpt_tos = [str(rcpt_to) for rcpt_to in manifest.get("rcpt_tos") or []]
+        recipients = self._recovery_recipients_from_manifest(connection, manifest)
 
         connection.execute(
             """
@@ -464,11 +467,8 @@ class RapidInboxRuntime:
         )
 
         mailbox_ids: set[int] = set()
-        for rcpt_to in rcpt_tos:
-            match = self.domains.match_address(rcpt_to)
-            if match is None:
-                continue
-            mailbox_id = self._ensure_mailbox_record(connection, match, received_at)
+        for recipient in recipients:
+            mailbox_id = self._ensure_recovery_mailbox_record(connection, recipient, received_at)
             mailbox_ids.add(mailbox_id)
             connection.execute(
                 """
@@ -480,11 +480,93 @@ class RapidInboxRuntime:
                     delivered_at
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (f"dlv_{uuid.uuid4().hex}", message_id, mailbox_id, rcpt_to, received_at),
+                (
+                    f"dlv_{uuid.uuid4().hex}",
+                    message_id,
+                    mailbox_id,
+                    recipient["rcpt_to"],
+                    received_at,
+                ),
             )
 
         for mailbox_id in mailbox_ids:
             self._refresh_mailbox_summary(connection, mailbox_id)
+
+    def _recovery_recipient_payload(self, rcpt_to: str, match) -> dict[str, Any]:
+        return {
+            "rcpt_to": rcpt_to,
+            "domain_id": match.domain_id,
+            "domain_ascii": match.domain_ascii,
+            "root_domain_ascii": match.root_domain_ascii,
+            "local_part_canonical": match.local_part_canonical,
+            "address_canonical": match.address_canonical,
+        }
+
+    def _recovery_recipients_from_manifest(
+        self,
+        connection: sqlite3.Connection,
+        manifest: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        recipients = manifest.get("recipients")
+        if recipients is not None:
+            if not isinstance(recipients, list) or not recipients:
+                raise ValueError("invalid recovery manifest recipients")
+            return [self._coerce_recovery_recipient(recipient) for recipient in recipients]
+
+        rcpt_tos = manifest.get("rcpt_tos")
+        if not isinstance(rcpt_tos, list) or not rcpt_tos:
+            raise ValueError("invalid recovery manifest rcpt_tos")
+        return [self._resolve_legacy_recovery_recipient(connection, str(rcpt_to)) for rcpt_to in rcpt_tos]
+
+    def _coerce_recovery_recipient(self, recipient: Any) -> dict[str, Any]:
+        if not isinstance(recipient, dict):
+            raise ValueError("invalid recovery manifest recipient")
+        try:
+            return {
+                "rcpt_to": str(recipient["rcpt_to"]),
+                "domain_id": int(recipient["domain_id"]),
+                "domain_ascii": str(recipient["domain_ascii"]),
+                "root_domain_ascii": str(recipient["root_domain_ascii"]),
+                "local_part_canonical": str(recipient["local_part_canonical"]),
+                "address_canonical": str(recipient["address_canonical"]),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid recovery manifest recipient") from exc
+
+    def _resolve_legacy_recovery_recipient(
+        self,
+        connection: sqlite3.Connection,
+        rcpt_to: str,
+    ) -> dict[str, Any]:
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                root_domain_ascii,
+                accept_exact,
+                accept_subdomains,
+                plus_addressing_mode,
+                local_part_case_sensitive
+            FROM domains
+            ORDER BY LENGTH(root_domain_ascii) DESC, id ASC
+            """
+        ).fetchall()
+        match = DomainMatcher(
+            [
+                DomainRule(
+                    domain_id=row["id"],
+                    root_domain_ascii=row["root_domain_ascii"],
+                    accept_exact=bool(row["accept_exact"]),
+                    accept_subdomains=bool(row["accept_subdomains"]),
+                    plus_addressing_mode=row["plus_addressing_mode"],
+                    local_part_case_sensitive=bool(row["local_part_case_sensitive"]),
+                )
+                for row in rows
+            ]
+        ).match_address(rcpt_to)
+        if match is None:
+            raise ValueError(f"unable to recover recipient: {rcpt_to}")
+        return self._recovery_recipient_payload(rcpt_to, match)
 
     async def _ensure_mailbox_exists(self, match) -> None:
         def operation(connection: sqlite3.Connection) -> None:
@@ -567,7 +649,59 @@ class RapidInboxRuntime:
         message_count: int,
         latest_message_at: str | None,
     ) -> int:
-        cursor = connection.execute(
+        cursor = self._insert_mailbox_from_values(
+            connection,
+            domain_id=match.domain_id,
+            local_part_canonical=match.local_part_canonical,
+            rcpt_domain_ascii=match.domain_ascii,
+            address_canonical=match.address_canonical,
+            address_display=match.address_canonical,
+            received_at=received_at,
+            message_count=message_count,
+            latest_message_at=latest_message_at,
+        )
+        return int(cursor.lastrowid)
+
+    def _ensure_recovery_mailbox_record(
+        self,
+        connection: sqlite3.Connection,
+        recipient: dict[str, Any],
+        received_at: str,
+    ) -> int:
+        existing = connection.execute(
+            "SELECT id FROM mailboxes WHERE address_canonical = ?",
+            (recipient["address_canonical"],),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+
+        cursor = self._insert_mailbox_from_values(
+            connection,
+            domain_id=int(recipient["domain_id"]),
+            local_part_canonical=str(recipient["local_part_canonical"]),
+            rcpt_domain_ascii=str(recipient["domain_ascii"]),
+            address_canonical=str(recipient["address_canonical"]),
+            address_display=str(recipient["address_canonical"]),
+            received_at=received_at,
+            message_count=0,
+            latest_message_at=None,
+        )
+        return int(cursor.lastrowid)
+
+    def _insert_mailbox_from_values(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        domain_id: int,
+        local_part_canonical: str,
+        rcpt_domain_ascii: str,
+        address_canonical: str,
+        address_display: str,
+        received_at: str,
+        message_count: int,
+        latest_message_at: str | None,
+    ) -> sqlite3.Cursor:
+        return connection.execute(
             """
             INSERT INTO mailboxes (
                 domain_id,
@@ -582,15 +716,14 @@ class RapidInboxRuntime:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                match.domain_id,
-                match.local_part_canonical,
-                match.domain_ascii,
-                match.address_canonical,
-                match.address_canonical,
+                domain_id,
+                local_part_canonical,
+                rcpt_domain_ascii,
+                address_canonical,
+                address_display,
                 received_at,
                 received_at,
                 latest_message_at,
                 message_count,
             ),
         )
-        return int(cursor.lastrowid)

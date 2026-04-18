@@ -119,3 +119,144 @@ async def test_recovery_scanner_rebuilds_mailbox_bounds_from_multiple_deliveries
         assert row["message_count"] == 2
     finally:
         await repaired.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_scanner_skips_bad_manifests_and_recovers_legacy_manifest_for_inactive_domain(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        created_domain = await runtime.create_domain("adb.com")
+        response = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="sender@example.com",
+            content=sample_email_bytes,
+        )
+        await runtime.drain_parser_queue()
+    finally:
+        await runtime.stop()
+
+    message_id = response.removeprefix("250 queued as ")
+    manifest_path = next(settings.manifests_dir.rglob("*.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["recipients"][0]["address_canonical"] == "foo@adb.com"
+    assert manifest["recipients"][0]["domain_id"] == created_domain["id"]
+    assert manifest["recipients"][0]["root_domain_ascii"] == "adb.com"
+    assert manifest["rcpt_tos"] == ["foo@adb.com"]
+    manifest.pop("recipients")
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    (settings.manifests_dir / "broken.json").write_text("{not valid json", encoding="utf-8")
+
+    with connect_database(settings.database_path) as connection:
+        connection.execute("UPDATE domains SET is_active = 0 WHERE root_domain_ascii = ?", ("adb.com",))
+        connection.execute("DELETE FROM message_deliveries")
+        connection.execute("DELETE FROM messages")
+        connection.execute("DELETE FROM mailboxes")
+        connection.commit()
+
+    repaired = RapidInboxRuntime(settings)
+    await repaired.start()
+    try:
+        await repaired.drain_parser_queue()
+    finally:
+        await repaired.stop()
+
+    with connect_database(settings.database_path) as connection:
+        mailbox = connection.execute(
+            """
+            SELECT first_seen_at, last_seen_at, latest_message_at, message_count
+            FROM mailboxes
+            WHERE address_canonical = ?
+            """,
+            ("foo@adb.com",),
+        ).fetchone()
+        delivery = connection.execute(
+            """
+            SELECT d.message_id, d.rcpt_to, d.delivered_at
+            FROM message_deliveries AS d
+            WHERE d.message_id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        message = connection.execute(
+            """
+            SELECT parse_status, parse_error
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+
+    assert mailbox["message_count"] == 1
+    assert mailbox["first_seen_at"] == manifest["received_at"]
+    assert mailbox["last_seen_at"] == manifest["received_at"]
+    assert mailbox["latest_message_at"] == manifest["received_at"]
+    assert delivery["rcpt_to"] == "foo@adb.com"
+    assert delivery["delivered_at"] == manifest["received_at"]
+    assert message["parse_status"] == "parsed"
+    assert message["parse_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_scanner_requeues_failed_message_on_startup(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+        response = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="sender@example.com",
+            content=sample_email_bytes,
+        )
+        await runtime.drain_parser_queue()
+    finally:
+        await runtime.stop()
+
+    message_id = response.removeprefix("250 queued as ")
+    with connect_database(settings.database_path) as connection:
+        connection.execute(
+            """
+            UPDATE messages
+            SET parse_status = 'failed',
+                parse_error = ?
+            WHERE id = ?
+            """,
+            ("forced failure", message_id),
+        )
+        connection.commit()
+
+    repaired = RapidInboxRuntime(settings)
+    await repaired.start()
+    try:
+        await repaired.drain_parser_queue()
+    finally:
+        await repaired.stop()
+
+    with connect_database(settings.database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT parse_status, parse_error
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+
+    assert row["parse_status"] == "parsed"
+    assert row["parse_error"] is None

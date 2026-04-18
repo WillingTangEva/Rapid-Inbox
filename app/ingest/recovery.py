@@ -16,7 +16,11 @@ class RecoveryScanner:
     async def run(self) -> None:
         self.runtime.storage.cleanup_stale_parts()
         for manifest_path in sorted(self.runtime.settings.manifests_dir.rglob("*.json")):
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            await self.runtime.recover_from_manifest(manifest)
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                await self.runtime.recover_from_manifest(manifest)
+            except Exception:
+                # Malformed manifests are skipped so one bad file cannot block startup recovery.
+                continue
         for message_id in await self.runtime.find_messages_for_reparse():
             await self.runtime.parse_queue.enqueue(ParseTask(message_id=message_id))
