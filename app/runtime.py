@@ -16,7 +16,11 @@ from app.ingest.parser import MessageParser, ParsedMessage
 from app.ingest.recovery import RecoveryScanner
 from app.ingest.queue import ParseQueue, ParseTask
 from app.ingest.storage import FileStorage, utc_now
+from app.services.audit import AuditService
 from app.services.domains import DomainService
+from app.services.mailboxes import MailboxService
+from app.services.messages import MessageService
+from app.services.settings import SettingsService
 from app.smtp.live_state import LiveState
 from app.smtp.matcher import DomainMatcher, DomainRule
 
@@ -30,6 +34,10 @@ class RapidInboxRuntime:
         self.auth = AuthService(settings, self.writer)
         self.api_keys = ApiKeyService(settings.database_path, self.writer)
         self.domains = DomainService(settings.database_path, self.writer)
+        self.mailboxes = MailboxService(self)
+        self.messages = MessageService(self)
+        self.audit = AuditService(self)
+        self.system_settings = SettingsService(self)
         self.parser = MessageParser(self.storage)
         self.parse_queue = ParseQueue(self._parse_message)
         self.live_state = LiveState()
@@ -53,6 +61,18 @@ class RapidInboxRuntime:
 
     def list_domains(self) -> list[dict[str, Any]]:
         return self.domains.list_domains()
+
+    async def reparse_message(self, message_id: str) -> None:
+        await self.messages.reparse_message(message_id)
+
+    def get_settings(self) -> dict[str, Any]:
+        return self.system_settings.get_settings()
+
+    async def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self.system_settings.update_settings(payload)
+
+    def list_audit_logs(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return self.audit.list_logs(limit=limit, offset=offset)
 
     async def ensure_smtp_session(self, session_id: str, session: Any, *, last_rcpt_to: str | None = None) -> None:
         now = utc_now()

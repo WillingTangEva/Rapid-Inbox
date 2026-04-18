@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import re
+import sqlite3
 from typing import Any
 
 from app.db.connection import connect_database
+from app.ingest.queue import ParseTask
 
 
 SAFE_INLINE_CONTENT_TYPES = {
@@ -47,6 +49,24 @@ class MessageService:
     ) -> bytes:
         await self.get_delivery_detail(mailbox_address, delivery_id, request_ip=request_ip)
         return await self._runtime.get_raw_message(delivery_id)
+
+    async def reparse_message(self, message_id: str) -> None:
+        def operation(connection: sqlite3.Connection) -> int:
+            cursor = connection.execute(
+                """
+                UPDATE messages
+                SET parse_status = 'pending',
+                    parse_error = NULL
+                WHERE id = ?
+                """,
+                (message_id,),
+            )
+            return int(cursor.rowcount)
+
+        updated_rows = await self._runtime.writer.execute(operation)
+        if updated_rows == 0:
+            raise LookupError("message not found")
+        await self._runtime.parse_queue.enqueue(ParseTask(message_id=message_id))
 
     async def get_public_mailbox_view(
         self,
