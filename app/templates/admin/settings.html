@@ -1,0 +1,27 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Settings</p>
+        <h2>System settings</h2>
+      </div>
+    </div>
+    {% if settings_items %}
+      <dl class="kvs">
+        {% for item in settings_items %}
+          <dt>{{ item.label }}</dt>
+          <dd>
+            <div class="stack-meta">
+              <strong>{{ item.value }}</strong>
+              <span class="muted">{{ item.hint }}</span>
+            </div>
+          </dd>
+        {% endfor %}
+      </dl>
+    {% else %}
+      <p class="muted">No settings available.</p>
+    {% endif %}
+  </section>
+{% endblock %}

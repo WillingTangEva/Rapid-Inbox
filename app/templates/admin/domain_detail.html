@@ -1,0 +1,83 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Domain</p>
+        <h2>{{ domain.root_domain_ascii }}</h2>
+      </div>
+      <a class="button button--ghost" href="/admin/domains">Back to domains</a>
+    </div>
+
+    <dl class="kvs">
+      <dt>Unicode</dt>
+      <dd>{{ domain.root_domain_unicode or domain.root_domain_ascii }}</dd>
+      <dt>Status</dt>
+      <dd>
+        <span class="pill {% if domain.is_active %}pill--success{% else %}pill--neutral{% endif %}">
+          {% if domain.is_active %}Active{% else %}Inactive{% endif %}
+        </span>
+      </dd>
+      <dt>Web access</dt>
+      <dd>{{ "Enabled" if domain.public_web_enabled else "Disabled" }}</dd>
+      <dt>API access</dt>
+      <dd>{{ "Enabled" if domain.public_api_enabled else "Disabled" }}</dd>
+      <dt>Exact matches</dt>
+      <dd>{{ "Yes" if domain.accept_exact else "No" }}</dd>
+      <dt>Subdomains</dt>
+      <dd>{{ "Yes" if domain.accept_subdomains else "No" }}</dd>
+      <dt>Plus addressing</dt>
+      <dd>{{ domain.plus_addressing_mode }}</dd>
+      <dt>Case sensitive</dt>
+      <dd>{{ "Yes" if domain.local_part_case_sensitive else "No" }}</dd>
+      <dt>Max message size</dt>
+      <dd>{{ domain.max_message_size_bytes }}</dd>
+      <dt>Retention days</dt>
+      <dd>{{ domain.retention_days if domain.retention_days is not none else "Unlimited" }}</dd>
+      <dt>DNS status</dt>
+      <dd>{{ domain.dns_status }}</dd>
+      <dt>Notes</dt>
+      <dd>{{ domain.notes or "None" }}</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Mailboxes</p>
+        <h2>Domain mailboxes</h2>
+      </div>
+    </div>
+    {% if mailboxes %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Mailbox</th>
+              <th>Messages</th>
+              <th>Latest message</th>
+              <th>Public</th>
+              <th>Hidden</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for mailbox in mailboxes %}
+              <tr>
+                <td>{{ mailbox.address_canonical }}</td>
+                <td>{{ mailbox.message_count }}</td>
+                <td>{{ mailbox.latest_message_at or "None" }}</td>
+                <td>{{ "Yes" if mailbox.public_enabled else "No" }}</td>
+                <td>{{ "Yes" if mailbox.is_hidden else "No" }}</td>
+                <td>{{ mailbox.notes or "None" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No mailboxes recorded for this domain yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

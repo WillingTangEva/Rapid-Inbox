@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Mailboxes</p>
+        <h2>Mailbox inventory</h2>
+      </div>
+    </div>
+    {% if mailboxes %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Mailbox</th>
+              <th>Messages</th>
+              <th>Latest message</th>
+              <th>Public</th>
+              <th>Hidden</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for mailbox in mailboxes %}
+              <tr>
+                <td>{{ mailbox.address_canonical }}</td>
+                <td>{{ mailbox.message_count }}</td>
+                <td>{{ mailbox.latest_message_at or "None" }}</td>
+                <td>{{ "Yes" if mailbox.public_enabled else "No" }}</td>
+                <td>{{ "Yes" if mailbox.is_hidden else "No" }}</td>
+                <td>{{ mailbox.notes or "None" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No mailboxes yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,82 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Overview</p>
+        <h2>Operations at a glance</h2>
+      </div>
+      <div class="button-row">
+        <a class="button" href="/admin/domains">Manage domains</a>
+        <a class="button button--ghost" href="/admin/messages">Review messages</a>
+      </div>
+    </div>
+    <p class="muted">Signed in as {{ admin.display_name or admin.username }}.</p>
+  </section>
+
+  <section class="grid stats">
+    {% for item in stats %}
+      <article class="card">
+        <p class="eyebrow">{{ item.label }}</p>
+        <p class="metric-value">{{ item.value }}</p>
+        <p class="metric-hint">{{ item.hint }}</p>
+      </article>
+    {% endfor %}
+  </section>
+
+  <section class="grid two-up">
+    <article class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Domains</p>
+          <h2>Recent domains</h2>
+        </div>
+      </div>
+      {% if recent_domains %}
+        <ul class="stack">
+          {% for domain in recent_domains %}
+            <li class="stack-row">
+              <div class="stack-meta">
+                <a href="/admin/domains/{{ domain.id }}">{{ domain.root_domain_ascii }}</a>
+                <span class="muted">{{ domain.created_at }}</span>
+              </div>
+              <span class="pill {% if domain.is_active %}pill--success{% else %}pill--neutral{% endif %}">
+                {% if domain.is_active %}Active{% else %}Inactive{% endif %}
+              </span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No domains yet.</p>
+      {% endif %}
+    </article>
+
+    <article class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Messages</p>
+          <h2>Recent messages</h2>
+        </div>
+      </div>
+      {% if recent_messages %}
+        <ul class="stack">
+          {% for message in recent_messages %}
+            <li class="stack-row">
+              <div class="stack-meta">
+                <strong>{{ message.subject or "(no subject)" }}</strong>
+                <span class="muted">{{ message.from_addr or "unknown sender" }}</span>
+                <span class="muted">{{ message.received_at }}</span>
+              </div>
+              <span class="pill {% if message.parse_status == 'parsed' %}pill--success{% elif message.parse_status == 'failed' %}pill--danger{% else %}pill--warning{% endif %}">
+                {{ message.parse_status }}
+              </span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No messages yet.</p>
+      {% endif %}
+    </article>
+  </section>
+{% endblock %}

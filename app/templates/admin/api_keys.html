@@ -1,0 +1,53 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">API Keys</p>
+        <h2>Administrative keys</h2>
+      </div>
+    </div>
+    {% if api_keys %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Kind</th>
+              <th>Status</th>
+              <th>Scopes</th>
+              <th>Domain grants</th>
+              <th>Mailbox grants</th>
+              <th>Last used</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for api_key in api_keys %}
+              <tr>
+                <td>
+                  <div class="stack-meta">
+                    <strong>{{ api_key.name }}</strong>
+                    <span class="muted">{{ api_key.public_id }}</span>
+                  </div>
+                </td>
+                <td>{{ api_key.kind }}</td>
+                <td>
+                  <span class="pill {% if api_key.status == 'active' %}pill--success{% elif api_key.status == 'revoked' %}pill--danger{% else %}pill--neutral{% endif %}">
+                    {{ api_key.status }}
+                  </span>
+                </td>
+                <td>{{ api_key.scopes or "None" }}</td>
+                <td>{{ api_key.domain_count }}</td>
+                <td>{{ api_key.mailbox_count }}</td>
+                <td>{{ api_key.last_used_at or "Never" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No API keys yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

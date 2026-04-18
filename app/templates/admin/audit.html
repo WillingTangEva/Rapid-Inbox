@@ -1,0 +1,46 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Audit</p>
+        <h2>Recent audit events</h2>
+      </div>
+    </div>
+    {% if logs %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Actor</th>
+              <th>Action</th>
+              <th>Resource</th>
+              <th>Status</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in logs %}
+              <tr>
+                <td>{{ log.created_at }}</td>
+                <td>{{ log.actor_type }}: {{ log.actor_ref or "system" }}</td>
+                <td>{{ log.action }}</td>
+                <td>{{ log.resource_type }}{% if log.resource_ref %}: {{ log.resource_ref }}{% endif %}</td>
+                <td>
+                  <span class="pill {% if log.status == 'success' %}pill--success{% else %}pill--danger{% endif %}">
+                    {{ log.status }}
+                  </span>
+                </td>
+                <td>{{ log.details or "None" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No audit events yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Domains</p>
+        <h2>Managed domains</h2>
+      </div>
+    </div>
+    {% if domains %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Status</th>
+              <th>Web</th>
+              <th>API</th>
+              <th>Exact</th>
+              <th>Subdomains</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for domain in domains %}
+              <tr>
+                <td>
+                  <a href="/admin/domains/{{ domain.id }}">{{ domain.root_domain_ascii }}</a>
+                </td>
+                <td>
+                  <span class="pill {% if domain.is_active %}pill--success{% else %}pill--neutral{% endif %}">
+                    {% if domain.is_active %}Active{% else %}Inactive{% endif %}
+                  </span>
+                </td>
+                <td>{{ "Enabled" if domain.public_web_enabled else "Disabled" }}</td>
+                <td>{{ "Enabled" if domain.public_api_enabled else "Disabled" }}</td>
+                <td>{{ "Yes" if domain.accept_exact else "No" }}</td>
+                <td>{{ "Yes" if domain.accept_subdomains else "No" }}</td>
+                <td>{{ domain.updated_at }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No domains yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

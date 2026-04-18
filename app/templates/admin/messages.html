@@ -1,0 +1,48 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Messages</p>
+        <h2>Recent messages</h2>
+      </div>
+    </div>
+    {% if messages %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Received</th>
+              <th>Subject</th>
+              <th>From</th>
+              <th>Status</th>
+              <th>Attachments</th>
+              <th>Deliveries</th>
+              <th>Parse error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for message in messages %}
+              <tr>
+                <td>{{ message.received_at }}</td>
+                <td>{{ message.subject or "(no subject)" }}</td>
+                <td>{{ message.from_addr or "unknown" }}</td>
+                <td>
+                  <span class="pill {% if message.parse_status == 'parsed' %}pill--success{% elif message.parse_status == 'failed' %}pill--danger{% else %}pill--warning{% endif %}">
+                    {{ message.parse_status }}
+                  </span>
+                </td>
+                <td>{{ message.attachment_count if message.has_attachments else 0 }}</td>
+                <td>{{ message.delivery_count }}</td>
+                <td>{{ message.parse_error or "None" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">No messages yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ page_title or "Dashboard" }} - Rapid Inbox Admin</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg-0: #050816;
+        --bg-1: #0b1221;
+        --panel: rgba(15, 23, 42, 0.86);
+        --panel-strong: rgba(15, 23, 42, 0.98);
+        --border: rgba(148, 163, 184, 0.18);
+        --text: #e5eef8;
+        --muted: #8da3bf;
+        --accent: #67e8f9;
+        --accent-strong: #22d3ee;
+        --danger: #fda4af;
+        --success: #86efac;
+        --warning: #fbbf24;
+        --shadow: 0 28px 90px rgba(2, 6, 23, 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        color: var(--text);
+        font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(34, 211, 238, 0.16), transparent 28%),
+          radial-gradient(circle at top right, rgba(103, 232, 249, 0.1), transparent 24%),
+          linear-gradient(180deg, var(--bg-0), var(--bg-1));
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        color: var(--accent-strong);
+      }
+
+      .shell {
+        width: min(1200px, calc(100vw - 2rem));
+        margin: 0 auto;
+        padding: 2rem 0 3rem;
+      }
+
+      .masthead,
+      .card,
+      .nav {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+      }
+
+      .masthead {
+        display: flex;
+        gap: 1.5rem;
+        align-items: flex-start;
+        justify-content: space-between;
+        padding: 1.5rem;
+        border-radius: 1.5rem;
+      }
+
+      .eyebrow {
+        margin: 0 0 0.25rem;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .masthead h1,
+      .card h2,
+      .card h3 {
+        margin: 0;
+        line-height: 1.1;
+      }
+
+      .masthead h1 {
+        font-size: clamp(1.9rem, 4vw, 3rem);
+      }
+
+      .lede {
+        margin: 0.75rem 0 0;
+        max-width: 58ch;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .account {
+        display: grid;
+        gap: 0.5rem;
+        justify-items: end;
+        text-align: right;
+      }
+
+      .account-name {
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.35rem 0.7rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: var(--text);
+        background: rgba(15, 23, 42, 0.8);
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 1rem 0;
+        padding: 0.75rem;
+        border-radius: 1.1rem;
+      }
+
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.3rem;
+        padding: 0.45rem 0.85rem;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .nav-link:hover {
+        border-color: rgba(103, 232, 249, 0.3);
+        background: rgba(103, 232, 249, 0.08);
+      }
+
+      .nav-link.is-active {
+        border-color: rgba(103, 232, 249, 0.42);
+        background: rgba(103, 232, 249, 0.14);
+        color: #f8feff;
+      }
+
+      .content {
+        display: grid;
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+
+      .card {
+        border-radius: 1.25rem;
+        padding: 1.25rem;
+      }
+
+      .card + .card {
+        margin-top: 0;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        margin: 0 0 1rem;
+      }
+
+      .section-title p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .grid.stats {
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      }
+
+      .grid.two-up {
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+
+      .metric-value {
+        margin: 0.35rem 0 0;
+        font-size: clamp(1.7rem, 3vw, 2.5rem);
+        font-weight: 800;
+      }
+
+      .metric-hint,
+      .muted {
+        color: var(--muted);
+      }
+
+      .metric-hint {
+        margin: 0.35rem 0 0;
+        line-height: 1.5;
+      }
+
+      .stack {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .stack-row {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-top: 1px solid rgba(148, 163, 184, 0.12);
+      }
+
+      .stack-row:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .stack-meta {
+        display: grid;
+        gap: 0.25rem;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 720px;
+      }
+
+      .table th,
+      .table td {
+        padding: 0.75rem 0.8rem;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .table th {
+        color: #c9d8e8;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .table tr:hover td {
+        background: rgba(103, 232, 249, 0.04);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.25rem 0.65rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        border: 1px solid transparent;
+      }
+
+      .pill--success {
+        background: rgba(134, 239, 172, 0.12);
+        color: var(--success);
+        border-color: rgba(134, 239, 172, 0.24);
+      }
+
+      .pill--danger {
+        background: rgba(253, 164, 175, 0.12);
+        color: var(--danger);
+        border-color: rgba(253, 164, 175, 0.24);
+      }
+
+      .pill--warning {
+        background: rgba(251, 191, 36, 0.12);
+        color: var(--warning);
+        border-color: rgba(251, 191, 36, 0.24);
+      }
+
+      .pill--neutral {
+        background: rgba(148, 163, 184, 0.1);
+        color: #d8e3ef;
+        border-color: rgba(148, 163, 184, 0.22);
+      }
+
+      .kvs {
+        display: grid;
+        grid-template-columns: minmax(10rem, 18rem) minmax(0, 1fr);
+        gap: 0.75rem 1rem;
+        align-items: start;
+      }
+
+      .kvs dt {
+        color: #c9d8e8;
+        font-weight: 700;
+      }
+
+      .kvs dd {
+        margin: 0;
+        color: var(--text);
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.6rem;
+        padding: 0.6rem 1rem;
+        border-radius: 999px;
+        border: 1px solid rgba(103, 232, 249, 0.35);
+        background: rgba(103, 232, 249, 0.14);
+        color: #f7feff;
+        font-weight: 700;
+      }
+
+      .button:hover {
+        background: rgba(103, 232, 249, 0.2);
+      }
+
+      .button--ghost {
+        border-color: rgba(148, 163, 184, 0.22);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .notice {
+        border-radius: 1rem;
+        padding: 0.85rem 1rem;
+        border: 1px solid rgba(251, 191, 36, 0.22);
+        background: rgba(251, 191, 36, 0.08);
+        color: #ffe8b0;
+      }
+
+      .notice--error {
+        border-color: rgba(253, 164, 175, 0.22);
+        background: rgba(253, 164, 175, 0.08);
+        color: #ffd2da;
+      }
+
+      .page-footer {
+        margin-top: 1rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 760px) {
+        .shell {
+          width: min(100vw - 1rem, 1200px);
+          padding-top: 0.5rem;
+        }
+
+        .masthead,
+        .nav,
+        .card {
+          border-radius: 1rem;
+        }
+
+        .masthead {
+          flex-direction: column;
+        }
+
+        .account {
+          justify-items: start;
+          text-align: left;
+        }
+
+        .kvs {
+          grid-template-columns: 1fr;
+        }
+
+        .table {
+          min-width: 560px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">Rapid Inbox</p>
+          <h1>Rapid Inbox Admin</h1>
+          <p class="lede">
+            Operations console for domains, mailboxes, messages, API keys, audit logs, and settings.
+          </p>
+        </div>
+        {% if admin %}
+          <div class="account">
+            <span class="account-name">{{ admin.display_name or admin.username }}</span>
+            <span class="badge">{{ admin.role }}</span>
+          </div>
+        {% endif %}
+      </header>
+      <nav class="nav" aria-label="Admin navigation">
+        <a class="nav-link{% if request.url.path == '/admin' %} is-active{% endif %}" href="/admin">Dashboard</a>
+        <a class="nav-link{% if request.url.path.startswith('/admin/domains') %} is-active{% endif %}" href="/admin/domains">Domains</a>
+        <a class="nav-link{% if request.url.path.startswith('/admin/mailboxes') %} is-active{% endif %}" href="/admin/mailboxes">Mailboxes</a>
+        <a class="nav-link{% if request.url.path.startswith('/admin/messages') %} is-active{% endif %}" href="/admin/messages">Messages</a>
+        <a class="nav-link{% if request.url.path == '/admin/live' %} is-active{% endif %}" href="/admin/live">Live</a>
+        <a class="nav-link{% if request.url.path.startswith('/admin/api-keys') %} is-active{% endif %}" href="/admin/api-keys">API Keys</a>
+        <a class="nav-link{% if request.url.path == '/admin/audit' %} is-active{% endif %}" href="/admin/audit">Audit</a>
+        <a class="nav-link{% if request.url.path == '/admin/settings' %} is-active{% endif %}" href="/admin/settings">Settings</a>
+      </nav>
+      <main class="content">
+        {% if page_body is defined and page_body %}
+          {{ page_body | safe }}
+        {% else %}
+          {% block content %}{% endblock %}
+        {% endif %}
+      </main>
+    </div>
+  </body>
+</html>
