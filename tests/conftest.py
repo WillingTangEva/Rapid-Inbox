@@ -9,6 +9,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 
 from app.config import Settings
+from app.db.connection import connect_database
 from app.main import create_app
 from app.runtime import RapidInboxRuntime
 
@@ -68,3 +69,13 @@ async def app_client(app_fixture) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
+
+
+__all__ = [
+    "SeededMessage",
+    "app_client",
+    "app_fixture",
+    "connect_database",
+    "runtime",
+    "sample_email_bytes",
+]

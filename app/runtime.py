@@ -10,6 +10,7 @@ from app.config import Settings
 from app.db.connection import connect_database, initialize_database
 from app.db.writer import DatabaseWriter
 from app.ingest.parser import MessageParser, ParsedMessage
+from app.ingest.recovery import RecoveryScanner
 from app.ingest.queue import ParseQueue, ParseTask
 from app.ingest.storage import FileStorage, utc_now
 from app.services.domains import DomainService
@@ -25,13 +26,14 @@ class RapidInboxRuntime:
         self.parser = MessageParser(self.storage)
         self.parse_queue = ParseQueue(self._parse_message)
         self.live_state = LiveState()
+        self.recovery = RecoveryScanner(self)
 
     async def start(self) -> None:
         self.settings.ensure_directories()
         initialize_database(self.settings.database_path)
-        self.storage.cleanup_stale_parts()
         self.domains.reload()
         await self.parse_queue.start()
+        await self.recovery.run()
 
     async def stop(self) -> None:
         await self.parse_queue.stop()
@@ -170,6 +172,21 @@ class RapidInboxRuntime:
 
     async def drain_parser_queue(self) -> None:
         await self.parse_queue.drain()
+
+    async def recover_from_manifest(self, manifest: dict[str, Any]) -> None:
+        await self.writer.execute(lambda connection: self._apply_recovery_manifest(connection, manifest))
+
+    async def find_messages_for_reparse(self) -> list[str]:
+        with connect_database(self.settings.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT id
+                FROM messages
+                WHERE parse_status IN ('pending', 'failed')
+                ORDER BY received_at ASC, id ASC
+                """
+            ).fetchall()
+        return [str(row["id"]) for row in rows]
 
     async def get_mailbox_view(self, mailbox_address: str, *, limit: int = 50) -> dict[str, Any]:
         match = self.domains.match_address(mailbox_address)
@@ -402,6 +419,73 @@ class RapidInboxRuntime:
                 ),
             )
 
+    def _apply_recovery_manifest(self, connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
+        message_id = str(manifest["message_id"])
+        smtp_session_id = manifest.get("smtp_session_id")
+        if smtp_session_id is not None:
+            session_exists = connection.execute(
+                "SELECT 1 FROM smtp_sessions WHERE id = ?",
+                (smtp_session_id,),
+            ).fetchone()
+            if session_exists is None:
+                smtp_session_id = None
+
+        received_at = str(manifest["received_at"])
+        raw_path = str(manifest["raw_path"])
+        raw_sha256 = str(manifest["raw_sha256"])
+        raw_size_bytes = int(manifest["raw_size_bytes"])
+        envelope_from = manifest.get("envelope_from")
+        rcpt_tos = [str(rcpt_to) for rcpt_to in manifest.get("rcpt_tos") or []]
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO messages (
+                id,
+                smtp_session_id,
+                raw_path,
+                raw_sha256,
+                raw_size_bytes,
+                envelope_from,
+                from_addr,
+                received_at,
+                parse_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                message_id,
+                smtp_session_id,
+                raw_path,
+                raw_sha256,
+                raw_size_bytes,
+                envelope_from,
+                envelope_from,
+                received_at,
+            ),
+        )
+
+        mailbox_ids: set[int] = set()
+        for rcpt_to in rcpt_tos:
+            match = self.domains.match_address(rcpt_to)
+            if match is None:
+                continue
+            mailbox_id = self._ensure_mailbox_record(connection, match, received_at)
+            mailbox_ids.add(mailbox_id)
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO message_deliveries (
+                    id,
+                    message_id,
+                    mailbox_id,
+                    rcpt_to,
+                    delivered_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (f"dlv_{uuid.uuid4().hex}", message_id, mailbox_id, rcpt_to, received_at),
+            )
+
+        for mailbox_id in mailbox_ids:
+            self._refresh_mailbox_summary(connection, mailbox_id)
+
     async def _ensure_mailbox_exists(self, match) -> None:
         def operation(connection: sqlite3.Connection) -> None:
             existing = connection.execute(
@@ -433,6 +517,37 @@ class RapidInboxRuntime:
             return int(existing["id"])
 
         return self._insert_mailbox(connection, match, received_at, message_count=1, latest_message_at=received_at)
+
+    def _ensure_mailbox_record(self, connection: sqlite3.Connection, match, received_at: str) -> int:
+        existing = connection.execute(
+            "SELECT id FROM mailboxes WHERE address_canonical = ?",
+            (match.address_canonical,),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
+
+        return self._insert_mailbox(connection, match, received_at, message_count=0, latest_message_at=None)
+
+    def _refresh_mailbox_summary(self, connection: sqlite3.Connection, mailbox_id: int) -> None:
+        summary = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS message_count,
+                MAX(delivered_at) AS latest_message_at
+            FROM message_deliveries
+            WHERE mailbox_id = ? AND status = 'active'
+            """,
+            (mailbox_id,),
+        ).fetchone()
+        connection.execute(
+            """
+            UPDATE mailboxes
+            SET message_count = ?,
+                latest_message_at = ?
+            WHERE id = ?
+            """,
+            (int(summary["message_count"]), summary["latest_message_at"], mailbox_id),
+        )
 
     def _insert_mailbox(
         self,
