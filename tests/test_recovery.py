@@ -275,9 +275,20 @@ async def test_recovery_scanner_recreates_deleted_domain_from_manifest_metadata(
 
     await runtime.start()
     try:
-        await runtime.create_domain("adb.com")
+        await runtime.create_domain(
+            "adb.com",
+            accept_exact=True,
+            accept_subdomains=False,
+            public_web_enabled=False,
+            public_api_enabled=False,
+            plus_addressing_mode="strip",
+            local_part_case_sensitive=True,
+        )
+        with connect_database(settings.database_path) as connection:
+            connection.execute("UPDATE domains SET is_hidden = 1 WHERE root_domain_ascii = ?", ("adb.com",))
+            connection.commit()
         response = await runtime.accept_message(
-            rcpt_tos=["foo@adb.com"],
+            rcpt_tos=["Foo+Tag@adb.com"],
             envelope_from="sender@example.com",
             content=sample_email_bytes,
         )
@@ -286,6 +297,16 @@ async def test_recovery_scanner_recreates_deleted_domain_from_manifest_metadata(
         await runtime.stop()
 
     message_id = response.removeprefix("250 queued as ")
+    manifest_path = next(settings.manifests_dir.rglob("*.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    policy = manifest["recipients"][0]["domain_policy"]
+    assert policy["accept_exact"] is True
+    assert policy["accept_subdomains"] is False
+    assert policy["plus_addressing_mode"] == "strip"
+    assert policy["local_part_case_sensitive"] is True
+    assert policy["public_web_enabled"] is False
+    assert policy["public_api_enabled"] is False
+    assert policy["is_hidden"] is True
     with connect_database(settings.database_path) as connection:
         connection.execute("DELETE FROM message_deliveries")
         connection.execute("DELETE FROM messages")
@@ -296,9 +317,9 @@ async def test_recovery_scanner_recreates_deleted_domain_from_manifest_metadata(
     repaired = RapidInboxRuntime(settings)
     await repaired.start()
     try:
-        mailbox = await repaired.get_mailbox_view("foo@adb.com")
+        mailbox = await repaired.get_mailbox_view("Foo+Tag@adb.com")
         await repaired.drain_parser_queue()
-        mailbox_after_parse = await repaired.get_mailbox_view("foo@adb.com")
+        mailbox_after_parse = await repaired.get_mailbox_view("Foo+Tag@adb.com")
 
         assert mailbox["message_count"] == 1
         assert mailbox["items"][0]["message_id"] == message_id
@@ -310,6 +331,7 @@ async def test_recovery_scanner_recreates_deleted_domain_from_manifest_metadata(
         domain = connection.execute(
             """
             SELECT id, root_domain_ascii, is_active
+                 , plus_addressing_mode, local_part_case_sensitive, public_web_enabled, public_api_enabled, is_hidden
             FROM domains
             WHERE root_domain_ascii = ?
             """,
@@ -326,4 +348,9 @@ async def test_recovery_scanner_recreates_deleted_domain_from_manifest_metadata(
 
     assert domain["root_domain_ascii"] == "adb.com"
     assert domain["is_active"] == 1
-    assert delivery["rcpt_to"] == "foo@adb.com"
+    assert domain["plus_addressing_mode"] == "strip"
+    assert domain["local_part_case_sensitive"] == 1
+    assert domain["public_web_enabled"] == 0
+    assert domain["public_api_enabled"] == 0
+    assert domain["is_hidden"] == 1
+    assert delivery["rcpt_to"] == "Foo+Tag@adb.com"

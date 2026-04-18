@@ -108,7 +108,11 @@ class RapidInboxRuntime:
             matches.append((rcpt_to, match))
 
         raw_path, raw_sha256, raw_size_bytes = self.storage.write_raw_message(message_id, received_at, content)
-        recipient_recovery_payloads = [self._recovery_recipient_payload(rcpt_to, match) for rcpt_to, match in matches]
+        domain_policies = self._load_recovery_domain_policies(matches)
+        recipient_recovery_payloads = [
+            self._recovery_recipient_payload(rcpt_to, match, domain_policies[match.domain_id])
+            for rcpt_to, match in matches
+        ]
         manifest_payload = {
             "message_id": message_id,
             "smtp_session_id": smtp_session_id,
@@ -207,6 +211,9 @@ class RapidInboxRuntime:
                 for key in ("domain_ascii", "root_domain_ascii", "local_part_canonical", "address_canonical"):
                     if not isinstance(recipient.get(key), str):
                         raise ValueError("invalid recovery manifest")
+                domain_policy = recipient.get("domain_policy")
+                if domain_policy is not None:
+                    self._validate_recovery_domain_policy(domain_policy)
         else:
             rcpt_tos = manifest.get("rcpt_tos")
             if not isinstance(rcpt_tos, list) or not rcpt_tos:
@@ -214,6 +221,52 @@ class RapidInboxRuntime:
             for rcpt_to in rcpt_tos:
                 if not isinstance(rcpt_to, str):
                     raise ValueError("invalid recovery manifest")
+
+    def _validate_recovery_domain_policy(self, domain_policy: Any) -> None:
+        if not isinstance(domain_policy, dict):
+            raise ValueError("invalid recovery manifest")
+
+        for key in (
+            "root_domain_unicode",
+            "accept_exact",
+            "accept_subdomains",
+            "public_web_enabled",
+            "public_api_enabled",
+            "is_active",
+            "is_hidden",
+            "plus_addressing_mode",
+            "local_part_case_sensitive",
+            "max_message_size_bytes",
+            "retention_days",
+            "dns_status",
+        ):
+            if key not in domain_policy:
+                raise ValueError("invalid recovery manifest")
+
+        if not isinstance(domain_policy["root_domain_unicode"], str):
+            raise ValueError("invalid recovery manifest")
+        for key in (
+            "accept_exact",
+            "accept_subdomains",
+            "public_web_enabled",
+            "public_api_enabled",
+            "is_active",
+            "is_hidden",
+            "local_part_case_sensitive",
+        ):
+            if not isinstance(domain_policy[key], bool):
+                raise ValueError("invalid recovery manifest")
+        if not isinstance(domain_policy["plus_addressing_mode"], str):
+            raise ValueError("invalid recovery manifest")
+        if not isinstance(domain_policy["max_message_size_bytes"], int) or isinstance(domain_policy["max_message_size_bytes"], bool):
+            raise ValueError("invalid recovery manifest")
+        retention_days = domain_policy["retention_days"]
+        if retention_days is not None and (
+            not isinstance(retention_days, int) or isinstance(retention_days, bool)
+        ):
+            raise ValueError("invalid recovery manifest")
+        if not isinstance(domain_policy["dns_status"], str):
+            raise ValueError("invalid recovery manifest")
 
     async def find_messages_for_reparse(self) -> list[str]:
         with connect_database(self.settings.database_path) as connection:
@@ -528,7 +581,7 @@ class RapidInboxRuntime:
         for mailbox_id in mailbox_ids:
             self._refresh_mailbox_summary(connection, mailbox_id)
 
-    def _recovery_recipient_payload(self, rcpt_to: str, match) -> dict[str, Any]:
+    def _recovery_recipient_payload(self, rcpt_to: str, match, domain_policy: dict[str, Any]) -> dict[str, Any]:
         return {
             "rcpt_to": rcpt_to,
             "domain_id": match.domain_id,
@@ -536,6 +589,54 @@ class RapidInboxRuntime:
             "root_domain_ascii": match.root_domain_ascii,
             "local_part_canonical": match.local_part_canonical,
             "address_canonical": match.address_canonical,
+            "domain_policy": domain_policy,
+        }
+
+    def _load_recovery_domain_policies(self, matches: list[tuple[str, Any]]) -> dict[int, dict[str, Any]]:
+        domain_policies: dict[int, dict[str, Any]] = {}
+        with connect_database(self.settings.database_path) as connection:
+            for _, match in matches:
+                if match.domain_id not in domain_policies:
+                    domain_policies[match.domain_id] = self._load_recovery_domain_policy(connection, match.domain_id)
+        return domain_policies
+
+    def _load_recovery_domain_policy(self, connection: sqlite3.Connection, domain_id: int) -> dict[str, Any]:
+        row = connection.execute(
+            """
+            SELECT
+                root_domain_ascii,
+                root_domain_unicode,
+                accept_exact,
+                accept_subdomains,
+                public_web_enabled,
+                public_api_enabled,
+                is_active,
+                is_hidden,
+                plus_addressing_mode,
+                local_part_case_sensitive,
+                max_message_size_bytes,
+                retention_days,
+                dns_status
+            FROM domains
+            WHERE id = ?
+            """,
+            (domain_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"domain not found: {domain_id}")
+        return {
+            "root_domain_unicode": row["root_domain_unicode"] or row["root_domain_ascii"],
+            "accept_exact": bool(row["accept_exact"]),
+            "accept_subdomains": bool(row["accept_subdomains"]),
+            "public_web_enabled": bool(row["public_web_enabled"]),
+            "public_api_enabled": bool(row["public_api_enabled"]),
+            "is_active": bool(row["is_active"]),
+            "is_hidden": bool(row["is_hidden"]),
+            "plus_addressing_mode": row["plus_addressing_mode"],
+            "local_part_case_sensitive": bool(row["local_part_case_sensitive"]),
+            "max_message_size_bytes": int(row["max_message_size_bytes"]),
+            "retention_days": row["retention_days"],
+            "dns_status": row["dns_status"],
         }
 
     def _recovery_recipients_from_manifest(
@@ -558,6 +659,7 @@ class RapidInboxRuntime:
         if not isinstance(recipient, dict):
             raise ValueError("invalid recovery manifest recipient")
         try:
+            domain_policy = recipient.get("domain_policy")
             return {
                 "rcpt_to": str(recipient["rcpt_to"]),
                 "domain_id": int(recipient["domain_id"]),
@@ -565,9 +667,27 @@ class RapidInboxRuntime:
                 "root_domain_ascii": str(recipient["root_domain_ascii"]),
                 "local_part_canonical": str(recipient["local_part_canonical"]),
                 "address_canonical": str(recipient["address_canonical"]),
+                "domain_policy": self._coerce_recovery_domain_policy(domain_policy) if domain_policy is not None else None,
             }
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("invalid recovery manifest recipient") from exc
+
+    def _coerce_recovery_domain_policy(self, domain_policy: Any) -> dict[str, Any]:
+        self._validate_recovery_domain_policy(domain_policy)
+        return {
+            "root_domain_unicode": str(domain_policy["root_domain_unicode"]),
+            "accept_exact": bool(domain_policy["accept_exact"]),
+            "accept_subdomains": bool(domain_policy["accept_subdomains"]),
+            "public_web_enabled": bool(domain_policy["public_web_enabled"]),
+            "public_api_enabled": bool(domain_policy["public_api_enabled"]),
+            "is_active": bool(domain_policy["is_active"]),
+            "is_hidden": bool(domain_policy["is_hidden"]),
+            "plus_addressing_mode": str(domain_policy["plus_addressing_mode"]),
+            "local_part_case_sensitive": bool(domain_policy["local_part_case_sensitive"]),
+            "max_message_size_bytes": int(domain_policy["max_message_size_bytes"]),
+            "retention_days": domain_policy["retention_days"],
+            "dns_status": str(domain_policy["dns_status"]),
+        }
 
     def _resolve_legacy_recovery_recipient(
         self,
@@ -602,7 +722,8 @@ class RapidInboxRuntime:
         ).match_address(rcpt_to)
         if match is None:
             raise ValueError(f"unable to recover recipient: {rcpt_to}")
-        return self._recovery_recipient_payload(rcpt_to, match)
+        domain_policy = self._load_recovery_domain_policy(connection, match.domain_id)
+        return self._recovery_recipient_payload(rcpt_to, match, domain_policy)
 
     async def _ensure_mailbox_exists(self, match) -> None:
         def operation(connection: sqlite3.Connection) -> None:
@@ -740,6 +861,9 @@ class RapidInboxRuntime:
             return int(existing["id"])
 
         domain_id = int(recipient["domain_id"])
+        domain_policy = recipient.get("domain_policy")
+        if domain_policy is None:
+            domain_policy = self._default_recovery_domain_policy(recipient)
         existing = connection.execute(
             "SELECT id FROM domains WHERE id = ?",
             (domain_id,),
@@ -771,17 +895,49 @@ class RapidInboxRuntime:
                 updated_by_admin_id,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, 1, 1, 1, 1, 1, 0, 0, 'keep', 52428800, NULL, 'unknown', NULL, NULL, NULL, NULL, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 domain_id,
                 root_domain_ascii,
-                root_domain_ascii,
+                domain_policy["root_domain_unicode"] or root_domain_ascii,
+                int(domain_policy["accept_exact"]),
+                int(domain_policy["accept_subdomains"]),
+                int(domain_policy["public_web_enabled"]),
+                int(domain_policy["public_api_enabled"]),
+                int(domain_policy["is_active"]),
+                int(domain_policy["is_hidden"]),
+                int(domain_policy["local_part_case_sensitive"]),
+                domain_policy["plus_addressing_mode"],
+                int(domain_policy["max_message_size_bytes"]),
+                domain_policy["retention_days"],
+                domain_policy["dns_status"],
+                None,
+                None,
+                None,
+                None,
+                None,
                 received_at,
                 received_at,
             ),
         )
         return domain_id
+
+    def _default_recovery_domain_policy(self, recipient: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "root_domain_unicode": str(recipient["root_domain_ascii"]),
+            "accept_exact": True,
+            "accept_subdomains": True,
+            "public_web_enabled": True,
+            "public_api_enabled": True,
+            "is_active": True,
+            "is_hidden": False,
+            "plus_addressing_mode": "keep",
+            "local_part_case_sensitive": False,
+            "max_message_size_bytes": 52_428_800,
+            "retention_days": None,
+            "dns_status": "unknown",
+        }
 
     def _insert_mailbox_from_values(
         self,
