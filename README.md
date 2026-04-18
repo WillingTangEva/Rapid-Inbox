@@ -11,6 +11,7 @@ Rapid Inbox is a local-first inbound mailbox service. It receives mail over SMTP
 5. Open `http://127.0.0.1:8000/admin/login`
 
 The default launchers use the current working directory as the storage root, so running them from the repository root creates `./storage/` and `./storage/app.db`.
+Run the HTTP and SMTP launchers in separate terminals, or background one of them, because both processes stay alive until you stop them.
 
 ## Defaults
 
