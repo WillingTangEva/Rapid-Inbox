@@ -478,15 +478,19 @@ class RapidInboxRuntime:
                 message_row["received_at"],
             )
         except Exception as exc:
-            await self.writer.execute(
+            attachment_paths = await self.writer.execute(
                 lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
             )
+            self._delete_attachment_files(attachment_paths)
             return
 
-        await self.writer.execute(lambda connection: self._apply_parsed_message(connection, task.message_id, parsed))
+        attachment_paths = await self.writer.execute(
+            lambda connection: self._apply_parsed_message(connection, task.message_id, parsed)
+        )
+        self._delete_attachment_files(attachment_paths)
 
-    def _apply_parsed_message(self, connection: sqlite3.Connection, message_id: str, parsed: ParsedMessage) -> None:
-        self._delete_attachment_files(connection, message_id)
+    def _apply_parsed_message(self, connection: sqlite3.Connection, message_id: str, parsed: ParsedMessage) -> list[str]:
+        attachment_paths = self._collect_attachment_storage_paths(connection, message_id)
         connection.execute(
             """
             UPDATE messages
@@ -565,9 +569,10 @@ class RapidInboxRuntime:
                     utc_now(),
                 ),
         )
+        return attachment_paths
 
-    def _mark_message_parse_failed(self, connection: sqlite3.Connection, message_id: str, parse_error: str) -> None:
-        self._delete_attachment_files(connection, message_id)
+    def _mark_message_parse_failed(self, connection: sqlite3.Connection, message_id: str, parse_error: str) -> list[str]:
+        attachment_paths = self._collect_attachment_storage_paths(connection, message_id)
         connection.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
         connection.execute(
             """
@@ -593,8 +598,9 @@ class RapidInboxRuntime:
             """,
             (utc_now(), parse_error, message_id),
         )
+        return attachment_paths
 
-    def _delete_attachment_files(self, connection: sqlite3.Connection, message_id: str) -> None:
+    def _collect_attachment_storage_paths(self, connection: sqlite3.Connection, message_id: str) -> list[str]:
         rows = connection.execute(
             """
             SELECT storage_path
@@ -603,8 +609,11 @@ class RapidInboxRuntime:
             """,
             (message_id,),
         ).fetchall()
-        for row in rows:
-            self.storage.resolve(str(row["storage_path"])).unlink(missing_ok=True)
+        return [str(row["storage_path"]) for row in rows]
+
+    def _delete_attachment_files(self, storage_paths: list[str]) -> None:
+        for storage_path in storage_paths:
+            self.storage.resolve(storage_path).unlink(missing_ok=True)
 
     def _apply_recovery_manifest(self, connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
         message_id = str(manifest["message_id"])

@@ -8,6 +8,7 @@ import pytest
 from app.config import Settings
 from app.db.connection import connect_database
 from app.ingest.parser import ParsedMessage
+from app.ingest.queue import ParseTask
 from app.main import create_app
 from app.smtp.handler import RapidInboxHandler
 
@@ -261,6 +262,75 @@ async def test_admin_api_reparse_failure_clears_stale_parsed_fields(runtime, mon
     assert row["html_body_path"] is None
     assert row["headers_json"] is None
     assert attachment_count["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_api_parse_failure_keeps_attachment_files_when_db_write_fails(runtime, monkeypatch) -> None:
+    attachment_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: Attachment Mail\r\n"
+        b"Message-ID: <attachment-dberror@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:00:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=boundary99\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Attachment body.\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain\r\n"
+        b'Content-Disposition: attachment; filename="report.txt"\r\n'
+        b"\r\n"
+        b"attachment contents\r\n"
+        b"\r\n"
+        b"--boundary99--\r\n"
+    )
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_reparse_db_failure",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=attachment_email_bytes,
+        smtp_session_id="smtp_reparse_db_failure",
+    )
+    await runtime.drain_parser_queue()
+    mailbox = await runtime.get_mailbox_view("foo@adb.com")
+    message_id = mailbox["items"][0]["message_id"]
+
+    with connect_database(runtime.settings.database_path) as connection:
+        attachment_row = connection.execute(
+            """
+            SELECT storage_path
+            FROM attachments
+            WHERE message_id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+    attachment_path = runtime.storage.resolve(attachment_row["storage_path"])
+    assert attachment_path.exists() is True
+
+    def failing_parse_message(*args, **kwargs):
+        raise ValueError("parse failed")
+
+    async def failing_execute(operation):
+        with connect_database(runtime.settings.database_path) as connection:
+            operation(connection)
+            connection.rollback()
+        raise RuntimeError("db write failed")
+
+    monkeypatch.setattr(runtime.parser, "parse_message", failing_parse_message)
+    monkeypatch.setattr(runtime.writer, "execute", failing_execute)
+
+    with pytest.raises(RuntimeError, match="db write failed"):
+        await runtime._parse_message(ParseTask(message_id=message_id))
+
+    assert attachment_path.exists() is True
 
 
 @pytest.mark.asyncio
