@@ -307,7 +307,7 @@ class RapidInboxRuntime:
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        await self._authorize_public_mailbox_access(mailbox_address, match.domain_id)
+        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id)
         await self._ensure_mailbox_exists(match)
         with connect_database(self.settings.database_path) as connection:
             mailbox = connection.execute(
@@ -348,7 +348,7 @@ class RapidInboxRuntime:
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        await self._authorize_public_mailbox_access(mailbox_address, match.domain_id)
+        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id)
         await self._ensure_mailbox_exists(match)
         with connect_database(self.settings.database_path) as connection:
             mailbox = connection.execute(
@@ -408,11 +408,11 @@ class RapidInboxRuntime:
             "attachments": [dict(attachment) for attachment in attachments],
         }
 
-    async def _authorize_public_mailbox_access(self, mailbox_address: str, domain_id: int) -> None:
+    async def _authorize_public_mailbox_access(self, canonical_mailbox_address: str, domain_id: int) -> None:
         context = get_active_permission_context()
         if context is None:
             return
-        ensure_mailbox_access(context, mailbox_address, domain_id, "public.read")
+        ensure_mailbox_access(context, canonical_mailbox_address, domain_id, "public.read")
         await self.api_keys.record_usage(context)
 
     async def get_raw_message(self, delivery_id: str) -> bytes:
