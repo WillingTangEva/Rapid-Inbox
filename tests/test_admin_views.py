@@ -14,3 +14,22 @@ async def test_admin_login_and_dashboard_page_flow(app_client, runtime) -> None:
     assert response.status_code == 200
     assert "Rapid Inbox Admin" in response.text
     assert "Domains" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_pages_redirect_unauthenticated_users_to_login(app_client) -> None:
+    response = await app_client.get("/admin")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_admin_login_rejects_invalid_credentials_with_error(app_client) -> None:
+    response = await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": "not-the-password"},
+    )
+
+    assert response.status_code == 401
+    assert "Invalid username or password." in response.text
