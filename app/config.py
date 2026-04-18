@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(slots=True)
+class Settings:
+    storage_root: Path
+    database_path: Path
+    host: str = "127.0.0.1"
+    port: int = 8000
+    smtp_host: str = "127.0.0.1"
+    smtp_port: int = 2525
+    max_message_size_bytes: int = 52_428_800
+    admin_token: str = "dev-admin-token"
+    public_api_key: str = "public-demo-key"
+
+    @property
+    def raw_dir(self) -> Path:
+        return self.storage_root / "raw"
+
+    @property
+    def text_dir(self) -> Path:
+        return self.storage_root / "text"
+
+    @property
+    def html_dir(self) -> Path:
+        return self.storage_root / "html"
+
+    @property
+    def attachments_dir(self) -> Path:
+        return self.storage_root / "attachments"
+
+    @property
+    def manifests_dir(self) -> Path:
+        return self.storage_root / "manifests"
+
+    @property
+    def tmp_dir(self) -> Path:
+        return self.storage_root / "tmp"
+
+    def ensure_directories(self) -> None:
+        for path in (
+            self.storage_root,
+            self.raw_dir,
+            self.text_dir,
+            self.html_dir,
+            self.attachments_dir,
+            self.manifests_dir,
+            self.tmp_dir,
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+
+
+def default_settings(base_dir: Path) -> Settings:
+    storage_root = base_dir / "storage"
+    return Settings(storage_root=storage_root, database_path=storage_root / "app.db")
