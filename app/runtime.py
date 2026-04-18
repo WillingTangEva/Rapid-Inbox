@@ -302,12 +302,12 @@ class RapidInboxRuntime:
             ).fetchall()
         return [str(row["id"]) for row in rows]
 
-    async def get_mailbox_view(self, mailbox_address: str, *, limit: int = 50) -> dict[str, Any]:
+    async def get_mailbox_view(self, mailbox_address: str, *, limit: int = 50, request_ip: str | None = None) -> dict[str, Any]:
         match = self.domains.match_address(mailbox_address)
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id)
+        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id, request_ip=request_ip)
         await self._ensure_mailbox_exists(match)
         with connect_database(self.settings.database_path) as connection:
             mailbox = connection.execute(
@@ -343,12 +343,12 @@ class RapidInboxRuntime:
             "message_count": mailbox["message_count"],
         }
 
-    async def get_delivery_detail(self, mailbox_address: str, delivery_id: str) -> dict[str, Any]:
+    async def get_delivery_detail(self, mailbox_address: str, delivery_id: str, *, request_ip: str | None = None) -> dict[str, Any]:
         match = self.domains.match_address(mailbox_address)
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id)
+        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id, request_ip=request_ip)
         await self._ensure_mailbox_exists(match)
         with connect_database(self.settings.database_path) as connection:
             mailbox = connection.execute(
@@ -408,12 +408,18 @@ class RapidInboxRuntime:
             "attachments": [dict(attachment) for attachment in attachments],
         }
 
-    async def _authorize_public_mailbox_access(self, canonical_mailbox_address: str, domain_id: int) -> None:
+    async def _authorize_public_mailbox_access(
+        self,
+        canonical_mailbox_address: str,
+        domain_id: int,
+        *,
+        request_ip: str | None = None,
+    ) -> None:
         context = get_active_permission_context()
         if context is None:
             return
         ensure_mailbox_access(context, canonical_mailbox_address, domain_id, "public.read")
-        await self.api_keys.record_usage(context)
+        await self.api_keys.record_usage(context, ip=request_ip)
 
     async def get_raw_message(self, delivery_id: str) -> bytes:
         with connect_database(self.settings.database_path) as connection:

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.db.connection import connect_database
+
 
 @pytest.mark.asyncio
 async def test_public_key_requires_scope_and_domain_grant(app_client, runtime) -> None:
@@ -97,3 +99,75 @@ async def test_mailbox_only_public_key_uses_canonical_mailbox_address(app_client
 
     assert response.status_code == 200
     assert response.json()["items"][0]["delivery_id"] == mailbox["items"][0]["delivery_id"]
+
+
+@pytest.mark.asyncio
+async def test_public_key_context_is_cleared_after_request(app_client, runtime, sample_email_bytes) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_context_cleanup",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    key = await runtime.api_keys.create_key(
+        name="context-cleanup",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+        smtp_session_id="smtp_context_cleanup",
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+
+    assert response.status_code == 200
+
+    mailbox = await runtime.get_mailbox_view("bar@adb.com")
+    assert mailbox["mailbox"] == "bar@adb.com"
+    assert mailbox["message_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_public_key_records_request_ip(app_client, runtime, sample_email_bytes) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_record_ip",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    key = await runtime.api_keys.create_key(
+        name="record-ip",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+        smtp_session_id="smtp_record_ip",
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+
+    assert response.status_code == 200
+
+    with connect_database(runtime.settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT last_used_ip FROM api_keys WHERE id = ?",
+            (key["id"],),
+        ).fetchone()
+
+    assert row["last_used_ip"] == "127.0.0.1"
