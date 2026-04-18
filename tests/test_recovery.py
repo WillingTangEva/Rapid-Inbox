@@ -362,6 +362,71 @@ async def test_recovery_scanner_requeues_failed_message_on_startup(
 
 
 @pytest.mark.asyncio
+async def test_recovery_scanner_restores_older_legacy_manifest_after_newer_manifest_recreates_domain(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain(
+            "adb.com",
+            accept_exact=True,
+            accept_subdomains=False,
+            plus_addressing_mode="strip",
+            local_part_case_sensitive=True,
+        )
+        await runtime.accept_message(
+            rcpt_tos=["Foo+Tag@adb.com"],
+            envelope_from="sender@example.com",
+            content=sample_email_bytes,
+        )
+        await runtime.accept_message(
+            rcpt_tos=["Foo+Tag@adb.com"],
+            envelope_from="sender@example.com",
+            content=sample_email_bytes,
+        )
+        await runtime.drain_parser_queue()
+    finally:
+        await runtime.stop()
+
+    manifest_paths = sorted(settings.manifests_dir.rglob("*.json"))
+    assert len(manifest_paths) == 2
+
+    legacy_manifest_path = manifest_paths[0]
+    legacy_manifest = json.loads(legacy_manifest_path.read_text(encoding="utf-8"))
+    legacy_manifest.pop("recipients")
+    legacy_manifest["received_at"] = "2026-04-17T20:00:00Z"
+    legacy_target_path = settings.manifests_dir / "2026" / "04" / "17" / legacy_manifest_path.name
+    legacy_target_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_manifest_path.rename(legacy_target_path)
+    legacy_target_path.write_text(json.dumps(legacy_manifest, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+
+    with connect_database(settings.database_path) as connection:
+        connection.execute("DELETE FROM message_deliveries")
+        connection.execute("DELETE FROM messages")
+        connection.execute("DELETE FROM mailboxes")
+        connection.execute("DELETE FROM domains WHERE root_domain_ascii = ?", ("adb.com",))
+        connection.commit()
+
+    repaired = RapidInboxRuntime(settings)
+    await repaired.start()
+    try:
+        await repaired.drain_parser_queue()
+        mailbox = await repaired.get_mailbox_view("Foo+Tag@adb.com")
+
+        assert mailbox["message_count"] == 2
+        assert len(mailbox["items"]) == 2
+    finally:
+        await repaired.stop()
+
+
+@pytest.mark.asyncio
 async def test_recovery_scanner_recreates_deleted_domain_from_manifest_metadata(
     tmp_path,
     sample_email_bytes: bytes,
