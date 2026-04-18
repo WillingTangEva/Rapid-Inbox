@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
+from pathlib import Path
 
 import httpx
 import pytest
@@ -422,6 +424,123 @@ async def test_admin_api_successful_reparse_replaces_attachment_files(runtime) -
     assert attachment_count["count"] == 0
     assert row["parse_status"] == "parsed"
     assert row["subject"] == "Reparsed Attachment Mail"
+
+
+@pytest.mark.asyncio
+async def test_admin_api_attachment_cleanup_errors_do_not_stop_later_reparses(runtime, monkeypatch) -> None:
+    attachment_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: Attachment Mail\r\n"
+        b"Message-ID: <attachment-cleanup-error@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:00:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=boundary99\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Attachment body.\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain\r\n"
+        b'Content-Disposition: attachment; filename="report.txt"\r\n'
+        b"\r\n"
+        b"attachment contents\r\n"
+        b"\r\n"
+        b"--boundary99--\r\n"
+    )
+    second_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: Plain Mail\r\n"
+        b"Message-ID: <plain-cleanup-error@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:05:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Plain message body.\r\n"
+    )
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_cleanup_error",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=attachment_email_bytes,
+        smtp_session_id="smtp_cleanup_error",
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=second_email_bytes,
+        smtp_session_id="smtp_cleanup_error",
+    )
+    await runtime.drain_parser_queue()
+
+    with connect_database(runtime.settings.database_path) as connection:
+        first_message_id = connection.execute(
+            "SELECT id FROM messages WHERE subject = ?",
+            ("Attachment Mail",),
+        ).fetchone()["id"]
+        second_message_id = connection.execute(
+            "SELECT id FROM messages WHERE subject = ?",
+            ("Plain Mail",),
+        ).fetchone()["id"]
+        first_attachment_row = connection.execute(
+            "SELECT storage_path FROM attachments WHERE message_id = ?",
+            (first_message_id,),
+        ).fetchone()
+    first_attachment_path = runtime.storage.resolve(first_attachment_row["storage_path"])
+
+    original_unlink = Path.unlink
+
+    def failing_unlink(self, missing_ok: bool = False):  # type: ignore[override]
+        if self == first_attachment_path:
+            raise OSError("cleanup failed")
+        return original_unlink(self, missing_ok=missing_ok)
+
+    def reparsed_message(message_id: str) -> ParsedMessage:
+        return ParsedMessage(
+            message_id_header=f"<reparsed-{message_id}@example.com>",
+            subject=f"reparsed-{message_id}",
+            from_name="Sender",
+            from_addr="sender@example.com",
+            reply_to=None,
+            date_header="Sat, 18 Apr 2026 20:00:00 +0000",
+            has_text=True,
+            has_html=False,
+            has_attachments=False,
+            attachment_count=0,
+            text_preview=f"reparsed-{message_id}",
+            text_body_path=None,
+            html_body_path=None,
+            headers_json="[]",
+            attachments=[],
+        )
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    monkeypatch.setattr(runtime.parser, "parse_message", lambda message_id, raw_content, received_at: reparsed_message(message_id))
+
+    await runtime.messages.reparse_message(first_message_id)
+    await runtime.messages.reparse_message(second_message_id)
+    await asyncio.wait_for(runtime.drain_parser_queue(), timeout=2)
+
+    with connect_database(runtime.settings.database_path) as connection:
+        first_row = connection.execute(
+            "SELECT subject FROM messages WHERE id = ?",
+            (first_message_id,),
+        ).fetchone()
+        second_row = connection.execute(
+            "SELECT subject FROM messages WHERE id = ?",
+            (second_message_id,),
+        ).fetchone()
+
+    assert first_attachment_path.exists() is True
+    assert first_row["subject"] == f"reparsed-{first_message_id}"
+    assert second_row["subject"] == f"reparsed-{second_message_id}"
 
 
 @pytest.mark.asyncio

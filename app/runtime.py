@@ -613,7 +613,10 @@ class RapidInboxRuntime:
 
     def _delete_attachment_files(self, storage_paths: list[str]) -> None:
         for storage_path in storage_paths:
-            self.storage.resolve(storage_path).unlink(missing_ok=True)
+            try:
+                self.storage.resolve(storage_path).unlink(missing_ok=True)
+            except OSError:
+                continue
 
     def _apply_recovery_manifest(self, connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
         message_id = str(manifest["message_id"])
