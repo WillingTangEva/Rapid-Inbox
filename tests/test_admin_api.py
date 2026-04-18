@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import httpx
 import pytest
 
 from app.config import Settings
 from app.main import create_app
+from app.smtp.handler import RapidInboxHandler
 
 
 @pytest.mark.asyncio
@@ -48,3 +51,63 @@ async def test_admin_api_supports_message_reparse_and_settings_update(admin_clie
     assert settings_response.status_code == 200
     assert audit.status_code == 200
     assert any(item["action"] == "settings.update" for item in audit.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_admin_api_read_endpoints_accept_read_scopes(admin_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    read_only_key = await runtime.api_keys.create_key(
+        name="fixture-admin-read",
+        kind="admin",
+        scopes=["domains.read", "system.read"],
+        domain_ids=[],
+        mailbox_patterns=[],
+    )
+
+    domains_response = await admin_client.get(
+        "/api/v1/admin/domains",
+        headers={"X-API-Key": read_only_key["plain_text"]},
+    )
+    settings_response = await admin_client.get(
+        "/api/v1/admin/settings",
+        headers={"X-API-Key": read_only_key["plain_text"]},
+    )
+
+    assert domains_response.status_code == 200
+    assert domains_response.json()["items"][0]["root_domain_ascii"] == "adb.com"
+    assert settings_response.status_code == 200
+    assert settings_response.json()["max_message_size_bytes"] == runtime.settings.max_message_size_bytes
+
+
+@pytest.mark.asyncio
+async def test_admin_api_settings_update_applies_live_message_size_limit(admin_client, runtime) -> None:
+    runtime.settings.max_message_size_bytes = 10
+    await runtime.create_domain("adb.com")
+    handler = RapidInboxHandler(runtime)
+    session = SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None)
+    envelope = SimpleNamespace(
+        rcpt_tos=[],
+        mail_from="sender@example.com",
+        content=(
+            b"From: Sender <sender@example.com>\r\n"
+            b"To: Foo <foo@adb.com>\r\n"
+            b"Subject: Live settings\r\n"
+            b"\r\n"
+            b"hello world\r\n"
+        ),
+    )
+
+    await handler.handle_RCPT(None, session, envelope, "foo@adb.com", [])
+    rejected = await handler.handle_DATA(None, session, envelope)
+    settings_response = await admin_client.patch(
+        "/api/v1/admin/settings",
+        json={"max_message_size_bytes": "100"},
+    )
+    accepted = await handler.handle_DATA(None, session, envelope)
+
+    await runtime.drain_parser_queue()
+
+    assert rejected == "552 message too large"
+    assert settings_response.status_code == 200
+    assert runtime.settings.max_message_size_bytes == 100
+    assert accepted.startswith("250 queued as ")

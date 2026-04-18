@@ -62,6 +62,9 @@ class SettingsService:
                 )
 
         await self._runtime.writer.execute(operation)
+        self._runtime.apply_live_settings(
+            {key: self._deserialize_value(key, value) for key, value in normalized.items()}
+        )
         return self.get_settings()
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, str]:

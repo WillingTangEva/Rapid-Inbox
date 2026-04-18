@@ -71,6 +71,10 @@ class RapidInboxRuntime:
     async def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self.system_settings.update_settings(payload)
 
+    def apply_live_settings(self, updates: dict[str, Any]) -> None:
+        if "max_message_size_bytes" in updates:
+            self.settings.max_message_size_bytes = int(updates["max_message_size_bytes"])
+
     def list_audit_logs(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
         return self.audit.list_logs(limit=limit, offset=offset)
 

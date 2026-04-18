@@ -47,6 +47,10 @@ def require_admin_scope(admin: PermissionContext, required_scope: str) -> None:
     if admin.legacy_credential:
         return
     if required_scope not in admin.scopes:
+        if required_scope.endswith(".read"):
+            write_scope = f"{required_scope[:-5]}.write"
+            if write_scope in admin.scopes:
+                return
         raise HTTPException(status_code=403, detail=required_scope)
 
 
@@ -68,7 +72,7 @@ async def list_domains(
     request: Request,
     admin: PermissionContext = Depends(require_admin_key),
 ) -> dict:
-    require_admin_scope(admin, "domains.write")
+    require_admin_scope(admin, "domains.read")
     await _record_admin_key_usage(request, admin)
     runtime = request.app.state.runtime
     return {"items": runtime.list_domains()}
@@ -149,7 +153,7 @@ async def get_settings(
     request: Request,
     admin: PermissionContext = Depends(require_admin_key),
 ) -> dict:
-    require_admin_scope(admin, "system.write")
+    require_admin_scope(admin, "system.read")
     await _record_admin_key_usage(request, admin)
     return request.app.state.runtime.system_settings.get_settings()
 
