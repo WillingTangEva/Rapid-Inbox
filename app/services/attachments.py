@@ -2,15 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.messages import MessageService
-
-
-SAFE_INLINE_CONTENT_TYPES = {
-    "image/gif",
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-}
+from app.services.messages import MessageService, SAFE_INLINE_CONTENT_TYPES
 
 
 class AttachmentService:

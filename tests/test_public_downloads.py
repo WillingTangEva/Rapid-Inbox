@@ -251,7 +251,7 @@ async def test_public_html_frame_rewrites_cid_references_to_attachment_routes(ap
     html_response = await app_client.get(f"/mail/foo@cid.adb.com/{delivery_id}/html")
 
     assert html_response.status_code == 200
-    assert f"/mail/foo@cid.adb.com/{delivery_id}/attachments/{attachment_id}" in html_response.text
-    assert "cid:hero-image" not in html_response.text
+    assert "data:image/png;base64," in html_response.text
+    assert f"/mail/foo@cid.adb.com/{delivery_id}/attachments/{attachment_id}" not in html_response.text
     assert "Content-Security-Policy" in html_response.text
     assert "about:srcdoc" in html_response.text

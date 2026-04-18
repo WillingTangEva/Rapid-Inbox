@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any
 
 from app.db.connection import connect_database
 
+
+SAFE_INLINE_CONTENT_TYPES = {
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
 
 _CID_REFERENCE_RE = re.compile(r'cid:([^"\'<>\s]+)', re.IGNORECASE)
 
@@ -95,8 +103,6 @@ class MessageService:
         html_body = self.rewrite_cid_references(
             detail["html_body"] or "",
             attachments,
-            mailbox_address=detail["mailbox"],
-            delivery_id=detail["delivery_id"],
         )
         return self.build_public_html_preview_document(html_body)
 
@@ -106,7 +112,7 @@ class MessageService:
             '<html lang="en">'
             "<head>"
             '<meta charset="utf-8" />'
-            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src \'self\' data:; style-src \'unsafe-inline\'; form-action \'none\'; connect-src \'none\'; object-src \'none\'; frame-src \'none\'; script-src \'none\'" />'
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; form-action \'none\'; connect-src \'none\'; object-src \'none\'; frame-src \'none\'; script-src \'none\'" />'
             '<meta name="referrer" content="no-referrer" />'
             '<base href="about:srcdoc" />'
             "</head>"
@@ -118,16 +124,16 @@ class MessageService:
         self,
         html_body: str,
         attachments: list[dict[str, Any]],
-        *,
-        mailbox_address: str,
-        delivery_id: str,
     ) -> str:
         attachment_routes: dict[str, str] = {}
         for attachment in attachments:
             content_id = self._normalize_cid_reference(attachment.get("content_id"))
             if not content_id:
                 continue
-            attachment_routes[content_id] = f"/mail/{mailbox_address}/{delivery_id}/attachments/{attachment['id']}"
+            data_url = self._build_inline_data_url(attachment)
+            if data_url is None:
+                continue
+            attachment_routes[content_id] = data_url
         if not attachment_routes:
             return html_body
 
@@ -166,6 +172,15 @@ class MessageService:
             return ""
         return str(value).strip().strip("<>").lower()
 
+    def _build_inline_data_url(self, attachment: dict[str, Any]) -> str | None:
+        content_type = self._normalize_content_type(attachment.get("content_type"))
+        if content_type not in SAFE_INLINE_CONTENT_TYPES:
+            return None
+
+        content = self._runtime.storage.read_bytes(attachment["storage_path"])
+        encoded = base64.b64encode(content).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+
     def _load_attachments_with_content_ids(
         self,
         message_id: str,
@@ -194,6 +209,9 @@ class MessageService:
                 payload["content_id"] = content_id
             enriched_attachments.append(payload)
         return enriched_attachments
+
+    def _normalize_content_type(self, value: Any) -> str:
+        return str(value or "").split(";", 1)[0].strip().lower()
 
 
 __all__ = ["MessageService"]
