@@ -17,14 +17,16 @@ The default launchers use the current working directory as the storage root, so 
 The startup defaults live in `app/config.py` and are mirrored in `.env.example` for reference:
 
 - Bootstrap admin username: `admin`
-- Bootstrap admin password: generated at startup
+- Bootstrap admin password: `change-me-now`
 - Session cookie name: `rapid_inbox_session`
 - HTTP host and port: `127.0.0.1:8000`
 - SMTP host and port: `127.0.0.1:2525`
 - Max message size: `52428800`
 - Max recipients per message: `20`
 
-The app does not auto-load `.env` yet, so treat `.env.example` as a reference template unless you add your own loader. If you want a stable bootstrap admin password for manual testing, override `bootstrap_admin_password` when constructing `Settings` in a custom launcher.
+The default launcher flow creates the bootstrap admin with username `admin` and password `change-me-now`, so the login step is immediately usable on a fresh local checkout.
+
+The app does not auto-load `.env` yet, so treat `.env.example` as a reference template unless you add your own loader. If you want a different bootstrap admin password, override `bootstrap_admin_password` when constructing `Settings` in a custom launcher.
 
 ## Notes
 

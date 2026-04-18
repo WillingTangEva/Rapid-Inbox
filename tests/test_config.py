@@ -16,6 +16,6 @@ def test_settings_include_bootstrap_and_operational_defaults(tmp_path: Path) -> 
     settings = Settings(storage_root=tmp_path / "storage", database_path=tmp_path / "storage" / "app.db")
 
     assert settings.bootstrap_admin_username == "admin"
-    assert settings.bootstrap_admin_password
+    assert settings.bootstrap_admin_password == "change-me-now"
     assert settings.max_recipients_per_message == 20
     assert settings.session_cookie_name == "rapid_inbox_session"
