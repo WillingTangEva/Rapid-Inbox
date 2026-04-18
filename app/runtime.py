@@ -367,17 +367,8 @@ class RapidInboxRuntime:
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id, request_ip=request_ip)
-        await self._ensure_mailbox_exists(match)
+        mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
         with connect_database(self.settings.database_path) as connection:
-            mailbox = connection.execute(
-                """
-                SELECT id, address_canonical, latest_message_at, message_count
-                FROM mailboxes
-                WHERE address_canonical = ?
-                """,
-                (match.address_canonical,),
-            ).fetchone()
             rows = connection.execute(
                 """
                 SELECT
@@ -408,13 +399,8 @@ class RapidInboxRuntime:
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id, request_ip=request_ip)
-        await self._ensure_mailbox_exists(match)
+        mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
         with connect_database(self.settings.database_path) as connection:
-            mailbox = connection.execute(
-                "SELECT id, address_canonical FROM mailboxes WHERE address_canonical = ?",
-                (match.address_canonical,),
-            ).fetchone()
             row = connection.execute(
                 """
                 SELECT
@@ -480,6 +466,50 @@ class RapidInboxRuntime:
             return
         ensure_mailbox_access(context, canonical_mailbox_address, domain_id, "public.read")
         await self.api_keys.record_usage(context, ip=request_ip)
+
+    async def _load_public_mailbox(self, match, *, request_ip: str | None = None) -> dict[str, Any]:
+        with connect_database(self.settings.database_path) as connection:
+            mailbox = connection.execute(
+                """
+                SELECT
+                    id,
+                    address_canonical,
+                    message_count,
+                    public_enabled,
+                    is_hidden
+                FROM mailboxes
+                WHERE address_canonical = ?
+                """,
+                (match.address_canonical,),
+            ).fetchone()
+
+        if mailbox is not None and (not bool(mailbox["public_enabled"]) or bool(mailbox["is_hidden"])):
+            raise LookupError("mailbox not public")
+
+        await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id, request_ip=request_ip)
+
+        if mailbox is None:
+            await self._ensure_mailbox_exists(match)
+            with connect_database(self.settings.database_path) as connection:
+                mailbox = connection.execute(
+                    """
+                    SELECT
+                        id,
+                        address_canonical,
+                        message_count,
+                        public_enabled,
+                        is_hidden
+                    FROM mailboxes
+                    WHERE address_canonical = ?
+                    """,
+                    (match.address_canonical,),
+                ).fetchone()
+            if mailbox is None:
+                raise LookupError("mailbox not found")
+            if not bool(mailbox["public_enabled"]) or bool(mailbox["is_hidden"]):
+                raise LookupError("mailbox not public")
+
+        return dict(mailbox)
 
     async def get_raw_message(self, delivery_id: str) -> bytes:
         with connect_database(self.settings.database_path) as connection:

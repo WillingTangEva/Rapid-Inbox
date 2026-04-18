@@ -12,9 +12,10 @@ from app.http.admin_api import router as admin_api_router
 from app.http.public_api import router as public_api_router
 from app.http.public_views import router as public_views_router
 from app.runtime import RapidInboxRuntime
+from app.smtp.server import SMTPServer
 
 
-def create_app(*, settings: Settings | None = None) -> FastAPI:
+def create_app(*, settings: Settings | None = None, embed_smtp: bool = False) -> FastAPI:
     resolved_settings = settings or default_settings(Path.cwd())
     runtime = RapidInboxRuntime(resolved_settings)
     templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -24,11 +25,19 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
         app.state.settings = resolved_settings
         app.state.runtime = runtime
         app.state.templates = templates
-        await runtime.start()
+        smtp_server: SMTPServer | None = None
         try:
+            await runtime.start()
+            if embed_smtp:
+                smtp_server = SMTPServer(runtime)
+                smtp_server.start()
             yield
         finally:
-            await runtime.stop()
+            try:
+                if smtp_server is not None:
+                    smtp_server.stop()
+            finally:
+                await runtime.stop()
 
     app = FastAPI(title="Rapid Inbox", lifespan=lifespan)
     app.include_router(public_views_router)

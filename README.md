@@ -7,11 +7,10 @@ Rapid Inbox is a local-first inbound mailbox service. It receives mail over SMTP
 1. `python3.12 -m venv .venv`
 2. `.venv/bin/pip install -e .[dev]`
 3. `.venv/bin/rapid-inbox-http`
-4. `.venv/bin/rapid-inbox-smtp`
-5. Open `http://127.0.0.1:8000/admin/login`
+4. Open `http://127.0.0.1:8000/admin/login`
 
-The default launchers use the current working directory as the storage root, so running them from the repository root creates `./storage/` and `./storage/app.db`.
-Run the HTTP and SMTP launchers in separate terminals, or background one of them, because both processes stay alive until you stop them.
+The default HTTP launcher starts the FastAPI app and an embedded SMTP listener in one process, using the current working directory as the storage root. Running it from the repository root creates `./storage/` and `./storage/app.db`.
+If you need a standalone SMTP listener for a custom setup, you can still run `.venv/bin/rapid-inbox-smtp` in a separate terminal.
 
 ## Defaults
 
@@ -31,6 +30,6 @@ The app does not auto-load `.env` yet, so treat `.env.example` as a reference te
 
 ## Notes
 
-- The HTTP runner starts the FastAPI app with Uvicorn.
-- The SMTP runner starts the `aiosmtpd` listener and keeps it alive until interrupted.
+- The HTTP runner starts the FastAPI app and the embedded `aiosmtpd` listener with Uvicorn.
+- The SMTP runner starts the standalone `aiosmtpd` listener and keeps it alive until interrupted.
 - The admin login page uses the bootstrap admin credentials created on startup.

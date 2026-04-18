@@ -150,6 +150,74 @@ async def test_public_attachment_routes_allow_inline_only_for_safe_raster_images
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mailbox_updates",
+    [
+        {"public_enabled": False},
+        {"is_hidden": True},
+    ],
+)
+async def test_public_download_routes_respect_mailbox_visibility_flags(
+    app_client,
+    runtime,
+    mailbox_updates: dict[str, bool],
+) -> None:
+    attachment_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: Visibility Test\r\n"
+        b"Message-ID: <visibility@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:00:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=boundaryvis\r\n"
+        b"\r\n"
+        b"--boundaryvis\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Body text.\r\n"
+        b"\r\n"
+        b"--boundaryvis\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b'Content-Disposition: attachment; filename="report.txt"\r\n'
+        b"\r\n"
+        b"attachment contents\r\n"
+        b"\r\n"
+        b"--boundaryvis--\r\n"
+    )
+
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=attachment_email_bytes,
+    )
+    await runtime.drain_parser_queue()
+
+    mailbox = runtime.mailboxes.list_mailboxes()["items"][0]
+    mailbox_view = await runtime.get_mailbox_view("foo@adb.com")
+    delivery_id = mailbox_view["items"][0]["delivery_id"]
+    detail = await runtime.get_delivery_detail("foo@adb.com", delivery_id)
+    attachment_id = detail["attachments"][0]["id"]
+    await runtime.mailboxes.update_mailbox(mailbox["id"], mailbox_updates)
+
+    web_raw = await app_client.get(f"/mail/foo@adb.com/{delivery_id}/raw")
+    api_raw = await app_client.get(
+        f"/api/v1/public/mailboxes/foo@adb.com/messages/{delivery_id}/raw",
+        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+    )
+    web_attachment = await app_client.get(f"/mail/foo@adb.com/{delivery_id}/attachments/{attachment_id}")
+    api_attachment = await app_client.get(
+        f"/api/v1/public/mailboxes/foo@adb.com/messages/{delivery_id}/attachments/{attachment_id}",
+        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+    )
+
+    assert web_raw.status_code == 404
+    assert api_raw.status_code == 404
+    assert web_attachment.status_code == 404
+    assert api_attachment.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_public_web_routes_respect_public_web_enabled_flag(app_client, runtime, sample_email_bytes) -> None:
     await runtime.create_domain("web-disabled.adb.com", public_web_enabled=False, public_api_enabled=True)
     await runtime.accept_message(

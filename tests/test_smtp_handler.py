@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import default_settings
+from app import http_runner
+from app import main as app_main
 from app.runtime import RapidInboxRuntime
 from app import smtp_runner
 from app.smtp.handler import RapidInboxHandler
@@ -35,6 +37,130 @@ async def test_smtp_handler_accepts_allowed_domain_and_rejects_unknown(tmp_path,
         assert mailbox["items"][0]["parse_status"] == "parsed"
     finally:
         await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_smtp_handler_rejects_extra_recipients_after_live_limit_update(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    settings = default_settings(tmp_path)
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+        await runtime.update_settings({"max_recipients_per_message": 1})
+
+        session = SimpleNamespace(peer=("127.0.0.1", 2525), host_name="mx1.test", ssl=None)
+        envelope = SimpleNamespace(rcpt_tos=[], mail_from="sender@example.com", content=sample_email_bytes)
+
+        first = await handler.handle_RCPT(None, session, envelope, "foo@adb.com", [])
+        second = await handler.handle_RCPT(None, session, envelope, "bar@adb.com", [])
+        queued = await handler.handle_DATA(None, session, envelope)
+        await runtime.drain_parser_queue()
+        mailbox = await runtime.get_mailbox_view("foo@adb.com")
+
+        assert first == "250 OK"
+        assert second == "552 too many recipients"
+        assert queued.startswith("250 queued as ")
+        assert mailbox["items"][0]["parse_status"] == "parsed"
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_smtp_handler_applies_smallest_domain_message_size_limit(
+    tmp_path,
+) -> None:
+    settings = default_settings(tmp_path)
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("large.adb.com", max_message_size_bytes=100)
+        await runtime.create_domain("small.adb.com", max_message_size_bytes=10)
+        await runtime.update_settings({"max_message_size_bytes": 1000})
+
+        session = SimpleNamespace(peer=("127.0.0.1", 2525), host_name="mx1.test", ssl=None)
+        envelope = SimpleNamespace(
+            rcpt_tos=[],
+            mail_from="sender@example.com",
+            content=b"0123456789abcdefghij",
+        )
+
+        first = await handler.handle_RCPT(None, session, envelope, "first@large.adb.com", [])
+        second = await handler.handle_RCPT(None, session, envelope, "second@small.adb.com", [])
+        result = await handler.handle_DATA(None, session, envelope)
+
+        assert first == "250 OK"
+        assert second == "250 OK"
+        assert result == "552 message too large"
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_create_app_with_embedded_smtp_starts_and_stops_controller(monkeypatch, tmp_path) -> None:
+    calls: dict[str, object] = {"start": 0, "stop": 0}
+
+    class FakeSMTPServer:
+        def __init__(self, runtime) -> None:
+            calls["runtime"] = runtime
+
+        def start(self) -> None:
+            calls["start"] = int(calls["start"]) + 1
+
+        def stop(self) -> None:
+            calls["stop"] = int(calls["stop"]) + 1
+
+    monkeypatch.setattr(app_main, "SMTPServer", FakeSMTPServer)
+
+    settings = default_settings(tmp_path)
+    app = app_main.create_app(settings=settings, embed_smtp=True)
+
+    async with app.router.lifespan_context(app):
+        assert calls["start"] == 1
+        assert calls["runtime"] is app.state.runtime
+    assert calls["stop"] == 1
+
+
+def test_http_runner_builds_embedded_smtp_app(monkeypatch, tmp_path) -> None:
+    calls: dict[str, object] = {}
+
+    class DummyApp:
+        pass
+
+    def fake_default_settings(base_dir):
+        calls["base_dir"] = base_dir
+        return SimpleNamespace(host="127.0.0.1", port=8000)
+
+    def fake_create_app(*, settings=None, embed_smtp=False):
+        calls["settings"] = settings
+        calls["embed_smtp"] = embed_smtp
+        return DummyApp()
+
+    def fake_run(app, host, port, reload):
+        calls["app"] = app
+        calls["host"] = host
+        calls["port"] = port
+        calls["reload"] = reload
+
+    monkeypatch.setattr(http_runner, "default_settings", fake_default_settings)
+    monkeypatch.setattr(http_runner, "create_app", fake_create_app)
+    monkeypatch.setattr(http_runner.uvicorn, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    http_runner.main()
+
+    assert calls["base_dir"] == tmp_path
+    assert calls["embed_smtp"] is True
+    assert isinstance(calls["app"], DummyApp)
+    assert calls["host"] == "127.0.0.1"
+    assert calls["port"] == 8000
+    assert calls["reload"] is False
 
 
 @pytest.mark.asyncio

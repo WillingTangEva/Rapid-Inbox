@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import uvicorn
+from pathlib import Path
+
+from app.config import default_settings
+from app.main import create_app
 
 
 def main() -> None:
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)
+    settings = default_settings(Path.cwd())
+    app = create_app(settings=settings, embed_smtp=True)
+    uvicorn.run(app, host=settings.host, port=settings.port, reload=False)
 
 
 if __name__ == "__main__":

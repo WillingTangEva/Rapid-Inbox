@@ -39,3 +39,38 @@ async def test_mailbox_page_and_public_api_show_received_message(tmp_path, sampl
         assert "sender@example.com" in detail.text
         assert api.status_code == 200
         assert api.json()["items"][0]["delivery_id"] == delivery_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mailbox_updates",
+    [
+        {"public_enabled": False},
+        {"is_hidden": True},
+    ],
+)
+async def test_public_mailbox_routes_respect_mailbox_visibility_flags(
+    app_client,
+    runtime,
+    sample_email_bytes: bytes,
+    mailbox_updates: dict[str, bool],
+) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+    )
+    await runtime.drain_parser_queue()
+
+    mailbox = runtime.mailboxes.list_mailboxes()["items"][0]
+    await runtime.mailboxes.update_mailbox(mailbox["id"], mailbox_updates)
+
+    web_response = await app_client.get("/mail/foo@adb.com")
+    api_response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+    )
+
+    assert web_response.status_code == 404
+    assert api_response.status_code == 404
