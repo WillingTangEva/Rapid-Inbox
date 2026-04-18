@@ -586,12 +586,17 @@ async def test_recovery_scanner_uses_latest_policy_snapshot_for_deleted_domain(
     assert old_manifest_path is not None
     assert new_manifest_path is not None
 
-    old_manifest["received_at"] = "2026-04-17T20:00:00Z"
-    new_manifest["received_at"] = "2026-04-18T20:00:00Z"
-    old_target_path = settings.manifests_dir / "2026" / "04" / "17" / old_manifest_path.name
-    new_target_path = settings.manifests_dir / "2026" / "04" / "18" / new_manifest_path.name
-    old_target_path.parent.mkdir(parents=True, exist_ok=True)
-    new_target_path.parent.mkdir(parents=True, exist_ok=True)
+    assert isinstance(old_manifest["recovery_order_ns"], int)
+    assert isinstance(new_manifest["recovery_order_ns"], int)
+    same_second = "2026-04-18T20:00:00Z"
+    old_manifest["received_at"] = same_second
+    new_manifest["received_at"] = same_second
+    old_manifest["recovery_order_ns"] = 1_000_000_000
+    new_manifest["recovery_order_ns"] = 2_000_000_000
+    target_dir = settings.manifests_dir / "2026" / "04" / "18"
+    old_target_path = target_dir / "z-old-policy.json"
+    new_target_path = target_dir / "a-new-policy.json"
+    target_dir.mkdir(parents=True, exist_ok=True)
     old_manifest_path.rename(old_target_path)
     if new_manifest_path != new_target_path:
         new_manifest_path.rename(new_target_path)

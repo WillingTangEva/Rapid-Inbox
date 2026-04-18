@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any
+from time import time_ns
 
 from app.config import Settings
 from app.db.connection import connect_database, initialize_database
@@ -109,6 +110,7 @@ class RapidInboxRuntime:
 
         raw_path, raw_sha256, raw_size_bytes = self.storage.write_raw_message(message_id, received_at, content)
         domain_policies = self._load_recovery_domain_policies(matches)
+        recovery_order_ns = time_ns()
         recipient_recovery_payloads = [
             self._recovery_recipient_payload(rcpt_to, match, domain_policies[match.domain_id])
             for rcpt_to, match in matches
@@ -120,6 +122,7 @@ class RapidInboxRuntime:
             "rcpt_tos": list(rcpt_tos),
             "recipients": recipient_recovery_payloads,
             "received_at": received_at,
+            "recovery_order_ns": recovery_order_ns,
             "raw_path": raw_path,
             "raw_sha256": raw_sha256,
             "raw_size_bytes": raw_size_bytes,
@@ -196,6 +199,10 @@ class RapidInboxRuntime:
 
         if not all(isinstance(manifest[key], str) for key in ("message_id", "received_at", "raw_path", "raw_sha256")):
             raise ValueError("invalid recovery manifest")
+        if "recovery_order_ns" in manifest:
+            recovery_order_ns = manifest["recovery_order_ns"]
+            if not isinstance(recovery_order_ns, int) or isinstance(recovery_order_ns, bool) or recovery_order_ns < 0:
+                raise ValueError("invalid recovery manifest")
         raw_size_bytes = manifest["raw_size_bytes"]
         if not isinstance(raw_size_bytes, int) or isinstance(raw_size_bytes, bool):
             raise ValueError("invalid recovery manifest")
