@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -124,6 +125,46 @@ class RapidInboxRuntime:
 
         await self.writer.execute(operation)
 
+    async def record_smtp_rcpt(self, session_id: str, *, rcpt_to: str, accepted: bool) -> None:
+        now = utc_now()
+
+        def operation(connection: sqlite3.Connection) -> None:
+            self._update_smtp_session_summary(
+                connection,
+                session_id,
+                now,
+                accepted_delta=1 if accepted else 0,
+                rejected_delta=0 if accepted else 1,
+                last_rcpt_to_sample=rcpt_to,
+            )
+
+        await self.writer.execute(operation)
+
+    async def close_smtp_session(
+        self,
+        session_id: str,
+        *,
+        status: str,
+        close_reason: str | None = None,
+        result_code: int | None = None,
+        result_message: str | None = None,
+    ) -> None:
+        now = utc_now()
+
+        def operation(connection: sqlite3.Connection) -> None:
+            self._update_smtp_session_summary(
+                connection,
+                session_id,
+                now,
+                status=status,
+                disconnect_at=now,
+                close_reason=close_reason,
+                result_code=result_code,
+                result_message=result_message,
+            )
+
+        await self.writer.execute(operation)
+
     async def accept_message(
         self,
         *,
@@ -142,7 +183,9 @@ class RapidInboxRuntime:
                 raise ValueError(f"recipient domain not allowed: {rcpt_to}")
             matches.append((rcpt_to, match))
 
-        raw_path, raw_sha256, raw_size_bytes = self.storage.write_raw_message(message_id, received_at, content)
+        raw_path = self.storage.raw_message_path(message_id, received_at)
+        raw_sha256 = hashlib.sha256(content).hexdigest()
+        raw_size_bytes = len(content)
         domain_policies = self._load_recovery_domain_policies(matches)
         recovery_order_ns = time_ns()
         recipient_recovery_payloads = [
@@ -161,7 +204,10 @@ class RapidInboxRuntime:
             "raw_sha256": raw_sha256,
             "raw_size_bytes": raw_size_bytes,
         }
+        # Persist the recovery manifest first so the message can still be reconstructed
+        # if the raw write is interrupted.
         self.storage.write_manifest(message_id, received_at, manifest_payload)
+        self.storage.write_raw_message(message_id, received_at, content)
 
         def operation(connection: sqlite3.Connection) -> list[str]:
             if smtp_session_id is not None:
@@ -197,6 +243,15 @@ class RapidInboxRuntime:
                             None,
                         ),
                     )
+
+                self._update_smtp_session_summary(
+                    connection,
+                    smtp_session_id,
+                    received_at,
+                    message_delta=1,
+                    bytes_received_delta=raw_size_bytes,
+                    last_mail_from=envelope_from,
+                )
 
             connection.execute(
                 """
@@ -299,6 +354,60 @@ class RapidInboxRuntime:
             for rcpt_to in rcpt_tos:
                 if not isinstance(rcpt_to, str):
                     raise ValueError("invalid recovery manifest")
+
+    def _update_smtp_session_summary(
+        self,
+        connection: sqlite3.Connection,
+        session_id: str,
+        now: str,
+        *,
+        accepted_delta: int = 0,
+        rejected_delta: int = 0,
+        message_delta: int = 0,
+        bytes_received_delta: int = 0,
+        last_rcpt_to_sample: str | None = None,
+        last_mail_from: str | None = None,
+        status: str | None = None,
+        disconnect_at: str | None = None,
+        close_reason: str | None = None,
+        result_code: int | None = None,
+        result_message: str | None = None,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE smtp_sessions
+            SET first_command_at = COALESCE(first_command_at, ?),
+                last_command_at = ?,
+                message_count = message_count + ?,
+                rcpt_accepted_count = rcpt_accepted_count + ?,
+                rcpt_rejected_count = rcpt_rejected_count + ?,
+                bytes_received = bytes_received + ?,
+                last_mail_from = COALESCE(?, last_mail_from),
+                last_rcpt_to_sample = COALESCE(?, last_rcpt_to_sample),
+                status = COALESCE(?, status),
+                disconnect_at = COALESCE(?, disconnect_at),
+                close_reason = COALESCE(?, close_reason),
+                result_code = COALESCE(?, result_code),
+                result_message = COALESCE(?, result_message)
+            WHERE id = ?
+            """,
+            (
+                now,
+                now,
+                message_delta,
+                accepted_delta,
+                rejected_delta,
+                bytes_received_delta,
+                last_mail_from,
+                last_rcpt_to_sample,
+                status,
+                disconnect_at,
+                close_reason,
+                result_code,
+                result_message,
+                session_id,
+            ),
+        )
 
     def _validate_recovery_domain_policy(self, domain_policy: Any) -> None:
         if not isinstance(domain_policy, dict):

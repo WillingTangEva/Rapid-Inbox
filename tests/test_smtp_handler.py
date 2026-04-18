@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import default_settings
+from app.db.connection import connect_database
 from app import http_runner
 from app import main as app_main
 from app.runtime import RapidInboxRuntime
@@ -28,13 +29,40 @@ async def test_smtp_handler_accepts_allowed_domain_and_rejects_unknown(tmp_path,
         allowed = await handler.handle_RCPT(None, session, envelope, "foo@adb.com", [])
         rejected = await handler.handle_RCPT(None, session, envelope, "foo@example.com", [])
         queued = await handler.handle_DATA(None, session, envelope)
+        quit_response = await handler.handle_QUIT(None, session, envelope)
         await runtime.drain_parser_queue()
         mailbox = await runtime.get_mailbox_view("foo@adb.com")
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    status,
+                    message_count,
+                    rcpt_accepted_count,
+                    rcpt_rejected_count,
+                    bytes_received,
+                    last_mail_from,
+                    last_rcpt_to_sample,
+                    disconnect_at
+                FROM smtp_sessions
+                WHERE id = ?
+                """,
+                (session.rapid_inbox_session_id,),
+            ).fetchone()
 
         assert allowed == "250 OK"
         assert rejected.startswith("550")
         assert queued.startswith("250 queued as ")
+        assert quit_response.startswith("221")
         assert mailbox["items"][0]["parse_status"] == "parsed"
+        assert row["status"] == "closed"
+        assert row["message_count"] == 1
+        assert row["rcpt_accepted_count"] == 1
+        assert row["rcpt_rejected_count"] == 1
+        assert row["bytes_received"] == len(sample_email_bytes)
+        assert row["last_mail_from"] == "sender@example.com"
+        assert row["last_rcpt_to_sample"] == "foo@example.com"
+        assert row["disconnect_at"] is not None
     finally:
         await runtime.stop()
 

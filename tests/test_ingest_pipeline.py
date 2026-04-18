@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
+from app.db.connection import connect_database
 from app.ingest.storage import FileStorage
 from app.runtime import RapidInboxRuntime
 
@@ -105,6 +106,51 @@ async def test_accept_message_writes_manifest_for_recovery(tmp_path, sample_emai
         assert manifest["raw_sha256"] == hashlib.sha256(sample_email_bytes).hexdigest()
         assert manifest["raw_path"].endswith(".eml")
         assert manifest["raw_size_bytes"] == len(sample_email_bytes)
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_accept_message_writes_manifest_before_raw_file_creation(
+    tmp_path,
+    sample_email_bytes: bytes,
+    monkeypatch,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+
+        def fail_write_raw_message(*args, **kwargs):
+            raise RuntimeError("raw write failed")
+
+        monkeypatch.setattr(runtime.storage, "write_raw_message", fail_write_raw_message)
+
+        with pytest.raises(RuntimeError, match="raw write failed"):
+            await runtime.accept_message(
+                rcpt_tos=["foo@adb.com"],
+                envelope_from="sender@example.com",
+                content=sample_email_bytes,
+            )
+
+        manifest_paths = list(settings.manifests_dir.rglob("*.json"))
+        assert len(manifest_paths) == 1
+
+        manifest = json.loads(manifest_paths[0].read_text(encoding="utf-8"))
+        assert manifest["rcpt_tos"] == ["foo@adb.com"]
+        assert manifest["raw_path"].endswith(".eml")
+        assert manifest["raw_sha256"] == hashlib.sha256(sample_email_bytes).hexdigest()
+        assert not list(settings.raw_dir.rglob("*.eml"))
+
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute("SELECT COUNT(*) AS count FROM messages").fetchone()
+
+        assert row["count"] == 0
     finally:
         await runtime.stop()
 

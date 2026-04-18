@@ -13,7 +13,46 @@ class RapidInboxHandler:
         session_id = self._ensure_session_id(session)
         await self.runtime.ensure_smtp_session(session_id, session, last_rcpt_to=address)
         session_event = self._session_event(session, session_id, {"rcpt_to": address, "state": "rcpt"})
-        if address in envelope.rcpt_tos:
+        try:
+            if address in envelope.rcpt_tos:
+                await self.runtime.record_smtp_rcpt(session_id, rcpt_to=address, accepted=True)
+                await self.runtime.live_state.publish(
+                    {
+                        **session_event,
+                        "type": "rcpt_accepted",
+                        "rcpt_to": address,
+                        "state": "rcpt",
+                    }
+                )
+                return "250 OK"
+
+            if self.runtime.domains.match_address(address) is None:
+                await self.runtime.record_smtp_rcpt(session_id, rcpt_to=address, accepted=False)
+                await self.runtime.live_state.publish(
+                    {
+                        **session_event,
+                        "type": "rcpt_rejected",
+                        "rcpt_to": address,
+                        "state": "rcpt",
+                    }
+                )
+                return "550 domain not allowed"
+
+            if len(envelope.rcpt_tos) >= self._max_recipients_per_message():
+                await self.runtime.record_smtp_rcpt(session_id, rcpt_to=address, accepted=False)
+                await self.runtime.live_state.publish(
+                    {
+                        **session_event,
+                        "type": "rcpt_rejected",
+                        "rcpt_to": address,
+                        "state": "rcpt",
+                        "reason": "recipient limit exceeded",
+                    }
+                )
+                return "552 too many recipients"
+
+            envelope.rcpt_tos.append(address)
+            await self.runtime.record_smtp_rcpt(session_id, rcpt_to=address, accepted=True)
             await self.runtime.live_state.publish(
                 {
                     **session_event,
@@ -23,40 +62,16 @@ class RapidInboxHandler:
                 }
             )
             return "250 OK"
-
-        if self.runtime.domains.match_address(address) is None:
-            await self.runtime.live_state.publish(
-                {
-                    **session_event,
-                    "type": "rcpt_rejected",
-                    "rcpt_to": address,
-                    "state": "rcpt",
-                }
-            )
-            return "550 domain not allowed"
-
-        if len(envelope.rcpt_tos) >= self._max_recipients_per_message():
-            await self.runtime.live_state.publish(
-                {
-                    **session_event,
-                    "type": "rcpt_rejected",
-                    "rcpt_to": address,
-                    "state": "rcpt",
-                    "reason": "recipient limit exceeded",
-                }
-            )
-            return "552 too many recipients"
-
-        envelope.rcpt_tos.append(address)
-        await self.runtime.live_state.publish(
-            {
-                **session_event,
-                "type": "rcpt_accepted",
-                "rcpt_to": address,
-                "state": "rcpt",
-            }
-        )
-        return "250 OK"
+        except Exception:
+            try:
+                await self.runtime.close_smtp_session(
+                    session_id,
+                    status="error",
+                    close_reason="RCPT handling error",
+                )
+            except Exception:
+                pass
+            raise
 
     async def handle_DATA(self, server, session, envelope):
         session_id = self._ensure_session_id(session)
@@ -68,12 +83,24 @@ class RapidInboxHandler:
         if len(envelope.content) > self._effective_message_size_limit(envelope.rcpt_tos):
             return "552 message too large"
 
-        result = await self.runtime.accept_message(
-            rcpt_tos=list(envelope.rcpt_tos),
-            envelope_from=getattr(envelope, "mail_from", None),
-            content=envelope.content,
-            smtp_session_id=session_id,
-        )
+        try:
+            result = await self.runtime.accept_message(
+                rcpt_tos=list(envelope.rcpt_tos),
+                envelope_from=getattr(envelope, "mail_from", None),
+                content=envelope.content,
+                smtp_session_id=session_id,
+            )
+        except Exception:
+            try:
+                await self.runtime.close_smtp_session(
+                    session_id,
+                    status="error",
+                    close_reason="DATA handling error",
+                )
+            except Exception:
+                pass
+            raise
+
         message_id = None
         if result.startswith("250 queued as "):
             message_id = result.removeprefix("250 queued as ").strip() or None
@@ -88,6 +115,21 @@ class RapidInboxHandler:
             }
         )
         return result
+
+    async def handle_QUIT(self, server, session, envelope):
+        session_id = self._ensure_session_id(session)
+        await self.runtime.ensure_smtp_session(session_id, session)
+        try:
+            await self.runtime.close_smtp_session(
+                session_id,
+                status="closed",
+                close_reason="client quit",
+                result_code=221,
+                result_message="2.0.0 Bye",
+            )
+        except Exception:
+            pass
+        return "221 2.0.0 Bye"
 
     def _max_recipients_per_message(self) -> int:
         return int(self.runtime.get_settings()["max_recipients_per_message"])

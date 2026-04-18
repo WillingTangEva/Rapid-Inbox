@@ -33,8 +33,11 @@ class FileStorage:
     def storage_root(self) -> Path:
         return self._settings.storage_root
 
+    def raw_message_path(self, message_id: str, received_at: str) -> str:
+        return self._dated_path("raw", message_id, ".eml", received_at)
+
     def write_raw_message(self, message_id: str, received_at: str, content: bytes) -> tuple[str, str, int]:
-        relative_path = self._dated_path("raw", message_id, ".eml", received_at)
+        relative_path = self.raw_message_path(message_id, received_at)
         self._write_bytes(relative_path, content)
         digest = hashlib.sha256(content).hexdigest()
         return relative_path, digest, len(content)

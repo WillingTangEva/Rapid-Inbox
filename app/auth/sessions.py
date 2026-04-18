@@ -221,6 +221,19 @@ class AuthService:
         )
         return payload
 
+    async def revoke_session(self, session_id: str) -> None:
+        revoked_at = utc_now()
+        await self.writer.execute(
+            lambda connection: connection.execute(
+                """
+                UPDATE admin_sessions
+                SET revoked_at = COALESCE(revoked_at, ?)
+                WHERE id = ?
+                """,
+                (revoked_at, session_id),
+            )
+        )
+
     def _admin_payload(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": int(row["id"]),

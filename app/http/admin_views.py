@@ -314,6 +314,21 @@ async def login(request: Request) -> Response:
     return response
 
 
+@router.post("/admin/logout")
+async def logout(request: Request) -> Response:
+    cookie_name = request.app.state.settings.session_cookie_name
+    admin = await _current_admin(request)
+    if admin is not None:
+        try:
+            await request.app.state.runtime.auth.revoke_session(admin["session_id"])
+        except Exception:
+            pass
+
+    response = _redirect_to_login()
+    response.delete_cookie(cookie_name, path="/")
+    return response
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def dashboard_page(request: Request) -> Response:
     admin_or_response = await _require_admin(request)
