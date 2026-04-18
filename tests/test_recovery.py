@@ -1,13 +1,108 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
 
 from app.config import Settings
+from app.ingest.queue import ParseQueue, ParseTask
 from app.runtime import RapidInboxRuntime
 from conftest import connect_database
+
+
+@pytest.mark.asyncio
+async def test_parse_queue_continues_after_worker_exception() -> None:
+    seen: list[str] = []
+    calls = 0
+
+    async def worker(task: ParseTask) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("boom")
+        seen.append(task.message_id)
+
+    queue = ParseQueue(worker)
+    await queue.start()
+    try:
+        await queue.enqueue(ParseTask(message_id="msg_one"))
+        await queue.enqueue(ParseTask(message_id="msg_two"))
+        await asyncio.wait_for(queue.drain(), timeout=2)
+    finally:
+        await queue.stop()
+
+    assert seen == ["msg_two"]
+
+
+@pytest.mark.asyncio
+async def test_missing_raw_file_does_not_stop_later_parse_tasks(
+    tmp_path,
+    sample_email_bytes: bytes,
+    monkeypatch,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+        await runtime.ensure_smtp_session(
+            "smtp_missing_raw",
+            SimpleNamespace(peer=("127.0.0.1", 2525), host_name="localhost", ssl=None),
+        )
+        original_read_bytes = runtime.storage.read_bytes
+        call_count = 0
+
+        def flaky_read_bytes(relative_path: str) -> bytes:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise FileNotFoundError(relative_path)
+            return original_read_bytes(relative_path)
+
+        monkeypatch.setattr(runtime.storage, "read_bytes", flaky_read_bytes)
+
+        first_response = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="sender@example.com",
+            content=sample_email_bytes,
+            smtp_session_id="smtp_missing_raw",
+        )
+        second_response = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="sender@example.com",
+            content=sample_email_bytes,
+            smtp_session_id="smtp_missing_raw",
+        )
+        await asyncio.wait_for(runtime.drain_parser_queue(), timeout=2)
+    finally:
+        await runtime.stop()
+
+    first_message_id = first_response.removeprefix("250 queued as ")
+    second_message_id = second_response.removeprefix("250 queued as ")
+
+    with connect_database(settings.database_path) as connection:
+        rows = {
+            str(row["id"]): row
+            for row in connection.execute(
+                """
+                SELECT id, parse_status, parse_error
+                FROM messages
+                WHERE id IN (?, ?)
+                """,
+                (first_message_id, second_message_id),
+            ).fetchall()
+        }
+
+    assert rows[first_message_id]["parse_status"] == "failed"
+    assert rows[first_message_id]["parse_error"]
+    assert rows[second_message_id]["parse_status"] == "parsed"
+    assert rows[second_message_id]["parse_error"] is None
 
 
 @pytest.mark.asyncio

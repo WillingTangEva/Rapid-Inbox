@@ -323,3 +323,52 @@ async def test_public_html_frame_rewrites_cid_references_to_attachment_routes(ap
     assert f"/mail/foo@cid.adb.com/{delivery_id}/attachments/{attachment_id}" not in html_response.text
     assert "Content-Security-Policy" in html_response.text
     assert "about:srcdoc" in html_response.text
+
+
+@pytest.mark.asyncio
+async def test_public_html_frame_rewrites_cid_references_without_attachment_filename(app_client, runtime) -> None:
+    cid_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: CID Rewrite No Filename\r\n"
+        b"Message-ID: <cid-nofilename@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:00:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/related; boundary=boundarycidnofile\r\n"
+        b"\r\n"
+        b"--boundarycidnofile\r\n"
+        b"Content-Type: text/html; charset=utf-8\r\n"
+        b"\r\n"
+        b"<html><body><img src=\"cid:hero-image\" alt=\"Hero\"></body></html>\r\n"
+        b"\r\n"
+        b"--boundarycidnofile\r\n"
+        b"Content-Type: image/png\r\n"
+        b"Content-Disposition: inline\r\n"
+        b"Content-ID: <hero-image>\r\n"
+        b"\r\n"
+        b"png-bytes\r\n"
+        b"\r\n"
+        b"--boundarycidnofile--\r\n"
+    )
+
+    await runtime.create_domain("cid-nofilename.adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@cid-nofilename.adb.com"],
+        envelope_from="sender@example.com",
+        content=cid_email_bytes,
+    )
+    await runtime.drain_parser_queue()
+
+    mailbox = await runtime.get_mailbox_view("foo@cid-nofilename.adb.com")
+    delivery_id = mailbox["items"][0]["delivery_id"]
+    detail = await runtime.get_delivery_detail("foo@cid-nofilename.adb.com", delivery_id)
+    attachment = detail["attachments"][0]
+
+    html_response = await app_client.get(f"/mail/foo@cid-nofilename.adb.com/{delivery_id}/html")
+
+    assert html_response.status_code == 200
+    assert attachment["safe_filename"].endswith(".png")
+    assert attachment["safe_filename"] != "attachment.bin"
+    assert "data:image/png;base64," in html_response.text
+    assert "Content-Security-Policy" in html_response.text
+    assert "about:srcdoc" in html_response.text

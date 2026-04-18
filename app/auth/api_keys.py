@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import ipaddress
+import json
 import hashlib
 import hmac
 import secrets
 import sqlite3
+import threading
 import uuid
 from contextvars import ContextVar
+from collections import deque
 from pathlib import Path
+from time import monotonic
 from typing import Any, Sequence
+
+from fastapi import HTTPException
 
 from app.db.connection import connect_database
 from app.db.writer import DatabaseWriter
@@ -55,6 +62,8 @@ class ApiKeyService:
         self.writer = writer
         self._legacy_public_api_key: str | None = None
         self._legacy_public_context: PermissionContext | None = None
+        self._usage_lock = threading.Lock()
+        self._usage_windows: dict[int, deque[float]] = {}
 
     def configure_legacy_public_api_key(self, legacy_token: str) -> PublicAPIKeyProxy:
         self._legacy_public_api_key = legacy_token
@@ -84,6 +93,7 @@ class ApiKeyService:
         allow_header: bool = True,
         allow_query: bool = False,
         rate_limit_per_min: int = 60,
+        allowed_ip_cidrs: Sequence[str] | None = None,
         expires_at: str | None = None,
     ) -> dict[str, Any]:
         if kind not in VALID_API_KEY_KINDS:
@@ -94,6 +104,8 @@ class ApiKeyService:
         scope_values = self._unique_text_values(scopes)
         domain_values = self._unique_int_values(domain_ids)
         mailbox_values = self._unique_text_values(mailbox_patterns)
+        allowed_ip_values = self._normalize_ip_cidrs(allowed_ip_cidrs or ())
+        allowed_ip_cidrs_json = json.dumps(list(allowed_ip_values), ensure_ascii=False) if allowed_ip_values else None
         key_prefix, plain_text, secret_hash = make_api_key(kind)
         public_id = f"ak_{uuid.uuid4().hex}"
         created_at = utc_now()
@@ -113,10 +125,11 @@ class ApiKeyService:
                     allow_header,
                     allow_query,
                     rate_limit_per_min,
+                    allowed_ip_cidrs,
                     expires_at,
                     created_by_admin_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     public_id,
@@ -130,6 +143,7 @@ class ApiKeyService:
                     int(allow_header),
                     int(allow_query),
                     rate_limit_per_min,
+                    allowed_ip_cidrs_json,
                     expires_at,
                     created_by_admin_id,
                     created_at,
@@ -170,13 +184,65 @@ class ApiKeyService:
                 "allow_header": allow_header,
                 "allow_query": allow_query,
                 "rate_limit_per_min": rate_limit_per_min,
+                "allowed_ip_cidrs": list(allowed_ip_values),
                 "expires_at": expires_at,
                 "created_at": created_at,
             }
 
         return await self.writer.execute(operation)
 
-    def authenticate_plain_text(self, plain_text: str) -> PermissionContext:
+    def authenticate_plain_text(self, plain_text: str, *, request_ip: str | None = None) -> PermissionContext:
+        return self._authenticate_plain_text(plain_text, transport="header", request_ip=request_ip)
+
+    def authenticate_query(self, plain_text: str, *, request_ip: str | None = None) -> PermissionContext:
+        return self._authenticate_plain_text(plain_text, transport="query", request_ip=request_ip)
+
+    async def record_usage(self, context: PermissionContext, *, ip: str | None = None) -> None:
+        if context.api_key_id is None:
+            return
+
+        with connect_database(self.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT rate_limit_per_min, allowed_ip_cidrs
+                FROM api_keys
+                WHERE id = ?
+                """,
+                (context.api_key_id,),
+            ).fetchone()
+
+        if row is None:
+            raise HTTPException(status_code=401, detail="invalid api key")
+
+        if not self._request_ip_allowed(ip, row["allowed_ip_cidrs"]):
+            raise HTTPException(status_code=403, detail="api key ip not allowed")
+
+        rate_limit_per_min = int(row["rate_limit_per_min"])
+        if rate_limit_per_min > 0:
+            now_monotonic = monotonic()
+            cutoff = now_monotonic - 60
+            with self._usage_lock:
+                window = self._usage_windows.setdefault(context.api_key_id, deque())
+                while window and window[0] <= cutoff:
+                    window.popleft()
+                if len(window) >= rate_limit_per_min:
+                    raise HTTPException(status_code=429, detail="api key rate limit exceeded")
+                window.append(now_monotonic)
+
+        now = utc_now()
+        await self.writer.execute(
+            lambda connection: connection.execute(
+                """
+                UPDATE api_keys
+                SET last_used_at = ?,
+                    last_used_ip = COALESCE(?, last_used_ip)
+                WHERE id = ?
+                """,
+                (now, ip, context.api_key_id),
+            )
+        )
+
+    def _authenticate_plain_text(self, plain_text: str, *, transport: str, request_ip: str | None = None) -> PermissionContext:
         kind, key_prefix, secret = self._parse_plain_text(plain_text)
         now = utc_now()
 
@@ -191,6 +257,9 @@ class ApiKeyService:
                     secret_hash,
                     status,
                     allow_header,
+                    allow_query,
+                    rate_limit_per_min,
+                    allowed_ip_cidrs,
                     expires_at
                 FROM api_keys
                 WHERE key_prefix = ?
@@ -203,14 +272,22 @@ class ApiKeyService:
                 raise LookupError("invalid api key")
             if row["status"] != "active":
                 raise LookupError("inactive api key")
-            if not bool(row["allow_header"]):
-                raise LookupError("header access disabled")
+            if transport == "header":
+                if not bool(row["allow_header"]):
+                    raise LookupError("header access disabled")
+            elif transport == "query":
+                if not bool(row["allow_query"]):
+                    raise LookupError("query access disabled")
+            else:
+                raise ValueError("invalid api key transport")
             expires_at = row["expires_at"]
             if expires_at is not None and str(expires_at) <= now:
                 raise LookupError("expired api key")
             secret_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
             if not hmac.compare_digest(secret_hash, row["secret_hash"]):
                 raise LookupError("invalid api key")
+            if request_ip is not None and not self._request_ip_allowed(request_ip, row["allowed_ip_cidrs"]):
+                raise LookupError("api key ip not allowed")
 
             scope_rows = connection.execute(
                 """
@@ -248,23 +325,6 @@ class ApiKeyService:
             public_id=str(row["public_id"]),
             name=str(row["name"]),
             kind=str(row["kind"]),
-        )
-
-    async def record_usage(self, context: PermissionContext, *, ip: str | None = None) -> None:
-        if context.api_key_id is None:
-            return
-
-        now = utc_now()
-        await self.writer.execute(
-            lambda connection: connection.execute(
-                """
-                UPDATE api_keys
-                SET last_used_at = ?,
-                    last_used_ip = COALESCE(?, last_used_ip)
-                WHERE id = ?
-                """,
-                (now, ip, context.api_key_id),
-            )
         )
 
     def compare_public_api_key(self, candidate: object) -> bool:
@@ -315,6 +375,50 @@ class ApiKeyService:
             seen.add(normalized)
             unique_values.append(normalized)
         return tuple(unique_values)
+
+    def _normalize_ip_cidrs(self, values: Sequence[str]) -> tuple[str, ...]:
+        seen: set[str] = set()
+        normalized_values: list[str] = []
+        for value in values:
+            network = ipaddress.ip_network(str(value), strict=False)
+            canonical = network.with_prefixlen
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            normalized_values.append(canonical)
+        return tuple(normalized_values)
+
+    def _request_ip_allowed(self, request_ip: str | None, allowed_ip_cidrs_raw: str | None) -> bool:
+        if not allowed_ip_cidrs_raw:
+            return True
+        if request_ip is None:
+            return False
+
+        try:
+            request_address = ipaddress.ip_address(request_ip)
+        except ValueError:
+            return False
+
+        try:
+            allowed_cidrs = json.loads(allowed_ip_cidrs_raw)
+        except json.JSONDecodeError:
+            return False
+
+        if isinstance(allowed_cidrs, str):
+            allowed_cidrs = [allowed_cidrs]
+        if not isinstance(allowed_cidrs, list):
+            return False
+        if not allowed_cidrs:
+            return True
+
+        for allowed_cidr in allowed_cidrs:
+            try:
+                network = ipaddress.ip_network(str(allowed_cidr), strict=False)
+            except ValueError:
+                return False
+            if request_address in network:
+                return True
+        return False
 
 
 __all__ = [

@@ -171,3 +171,97 @@ async def test_public_key_records_request_ip(app_client, runtime, sample_email_b
         ).fetchone()
 
     assert row["last_used_ip"] == "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_public_key_ip_restriction_blocks_disallowed_client_ip(app_client, runtime, sample_email_bytes) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_ip_restriction",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    key = await runtime.api_keys.create_key(
+        name="ip-restricted",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+        allowed_ip_cidrs=["203.0.113.0/24"],
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+        smtp_session_id="smtp_ip_restriction",
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_public_key_rate_limit_blocks_repeat_requests(app_client, runtime, sample_email_bytes) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_rate_limit",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    key = await runtime.api_keys.create_key(
+        name="rate-limited",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+        rate_limit_per_min=1,
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+        smtp_session_id="smtp_rate_limit",
+    )
+    await runtime.drain_parser_queue()
+
+    first_response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+    second_response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_query_key_auth_respects_allow_query(runtime) -> None:
+    disabled_key = await runtime.api_keys.create_key(
+        name="query-disabled",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=[],
+    )
+    enabled_key = await runtime.api_keys.create_key(
+        name="query-enabled",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=[],
+        allow_query=True,
+    )
+
+    with pytest.raises(LookupError):
+        runtime.api_keys.authenticate_query(disabled_key["plain_text"])
+
+    context = runtime.api_keys.authenticate_query(enabled_key["plain_text"])
+
+    assert context.kind == "public"
+    assert context.public_id == enabled_key["public_id"]

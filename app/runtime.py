@@ -645,9 +645,18 @@ class RapidInboxRuntime:
             return
 
         try:
+            raw_bytes = self.storage.read_bytes(message_row["raw_path"])
+        except Exception as exc:
+            attachment_paths = await self.writer.execute(
+                lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
+            )
+            self._delete_attachment_files(attachment_paths)
+            return
+
+        try:
             parsed = self.parser.parse_message(
                 task.message_id,
-                self.storage.read_bytes(message_row["raw_path"]),
+                raw_bytes,
                 message_row["received_at"],
             )
         except Exception as exc:
