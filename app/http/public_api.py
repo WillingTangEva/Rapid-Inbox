@@ -32,10 +32,13 @@ async def list_mailbox_messages(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     require_public_api_key(request, x_api_key)
-    runtime = request.app.state.runtime
     request_ip = request.client.host if request.client is not None else None
     try:
-        return await runtime.get_mailbox_view(mailbox_address, request_ip=request_ip)
+        return await _message_service(request).get_public_mailbox_view(
+            mailbox_address,
+            surface="api",
+            request_ip=request_ip,
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
@@ -50,10 +53,14 @@ async def get_mailbox_message(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     require_public_api_key(request, x_api_key)
-    runtime = request.app.state.runtime
     request_ip = request.client.host if request.client is not None else None
     try:
-        return await runtime.get_delivery_detail(mailbox_address, delivery_id, request_ip=request_ip)
+        return await _message_service(request).get_public_delivery_detail(
+            mailbox_address,
+            delivery_id,
+            surface="api",
+            request_ip=request_ip,
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
@@ -70,9 +77,10 @@ async def get_mailbox_message_raw(
     require_public_api_key(request, x_api_key)
     request_ip = request.client.host if request.client is not None else None
     try:
-        raw_bytes = await _message_service(request).get_raw_message(
+        raw_bytes = await _message_service(request).get_public_raw_message(
             mailbox_address,
             delivery_id,
+            surface="api",
             request_ip=request_ip,
         )
     except LookupError as exc:
@@ -97,6 +105,7 @@ async def get_mailbox_message_attachment(
             mailbox_address,
             delivery_id,
             attachment_id,
+            surface="api",
             request_ip=request_ip,
         )
     except LookupError as exc:

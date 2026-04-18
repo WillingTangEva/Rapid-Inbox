@@ -21,9 +21,9 @@ def _attachment_service(request: Request) -> AttachmentService:
 
 @router.get("/mail/{mailbox_address}", response_class=HTMLResponse)
 async def mailbox_page(mailbox_address: str, request: Request) -> HTMLResponse:
-    runtime = request.app.state.runtime
+    service = _message_service(request)
     try:
-        mailbox = await runtime.get_mailbox_view(mailbox_address)
+        mailbox = await service.get_public_mailbox_view(mailbox_address, surface="web")
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return request.app.state.templates.TemplateResponse(
@@ -40,7 +40,7 @@ async def mailbox_page(mailbox_address: str, request: Request) -> HTMLResponse:
 async def message_page(mailbox_address: str, delivery_id: str, request: Request) -> HTMLResponse:
     service = _message_service(request)
     try:
-        detail = await service.get_delivery_detail(mailbox_address, delivery_id)
+        detail = await service.get_public_delivery_detail(mailbox_address, delivery_id, surface="web")
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return request.app.state.templates.TemplateResponse(
@@ -54,7 +54,7 @@ async def message_page(mailbox_address: str, delivery_id: str, request: Request)
 async def message_raw(mailbox_address: str, delivery_id: str, request: Request) -> Response:
     service = _message_service(request)
     try:
-        raw_bytes = await service.get_raw_message(mailbox_address, delivery_id)
+        raw_bytes = await service.get_public_raw_message(mailbox_address, delivery_id, surface="web")
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Response(raw_bytes, media_type="message/rfc822")
@@ -64,13 +64,13 @@ async def message_raw(mailbox_address: str, delivery_id: str, request: Request) 
 async def message_html_frame(mailbox_address: str, delivery_id: str, request: Request) -> HTMLResponse:
     service = _message_service(request)
     try:
-        detail = await service.get_delivery_detail(mailbox_address, delivery_id)
+        html_body = await service.get_public_html_body(mailbox_address, delivery_id, surface="web")
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return request.app.state.templates.TemplateResponse(
         request,
         "public/html_frame.html",
-        {"html_body": detail["html_body"] or ""},
+        {"html_body": html_body},
         headers={
             "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
         },
@@ -86,7 +86,12 @@ async def message_attachment(
 ) -> Response:
     service = _attachment_service(request)
     try:
-        attachment = await service.get_delivery_attachment(mailbox_address, delivery_id, attachment_id)
+        attachment = await service.get_delivery_attachment(
+            mailbox_address,
+            delivery_id,
+            attachment_id,
+            surface="web",
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     disposition = "inline" if attachment.get("is_inline") else "attachment"

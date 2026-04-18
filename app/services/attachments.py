@@ -16,9 +16,15 @@ class AttachmentService:
         delivery_id: str,
         attachment_id: str,
         *,
+        surface: str = "web",
         request_ip: str | None = None,
     ) -> dict[str, Any]:
-        detail = await self._messages.get_delivery_detail(mailbox_address, delivery_id, request_ip=request_ip)
+        detail = await self._messages.get_public_delivery_detail(
+            mailbox_address,
+            delivery_id,
+            surface=surface,
+            request_ip=request_ip,
+        )
         for attachment in detail["attachments"]:
             if attachment["id"] != attachment_id:
                 continue
