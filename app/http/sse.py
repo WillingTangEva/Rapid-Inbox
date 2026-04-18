@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from app.db.connection import connect_database
@@ -14,10 +16,34 @@ def encode_sse(event: dict[str, object]) -> str:
 
 
 def smtp_live_snapshot(runtime, *, history_limit: int = 25) -> list[dict[str, Any]]:
-    events = runtime.live_state.snapshot()
+    events, _ = runtime.live_state.snapshot_state()
     if events:
         return events
     return _recent_message_events(runtime, limit=history_limit)
+
+
+async def stream_smtp_live_events(
+    runtime,
+    *,
+    poll_interval: float = 0.25,
+    history_limit: int = 25,
+) -> AsyncIterator[str]:
+    events, last_seq = runtime.live_state.snapshot_state()
+    if not events:
+        events = _recent_message_events(runtime, limit=history_limit)
+        last_seq = 0
+
+    for event in events:
+        yield encode_sse(event)
+
+    while True:
+        new_events = runtime.live_state.snapshot_since(last_seq)
+        if new_events:
+            last_seq = int(new_events[-1].get("seq", last_seq))
+            for event in new_events:
+                yield encode_sse(event)
+            continue
+        await asyncio.sleep(poll_interval)
 
 
 def recent_smtp_sessions(runtime, *, limit: int = 25) -> list[dict[str, Any]]:

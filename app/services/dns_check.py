@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import dns.resolver
@@ -8,7 +9,7 @@ import dns.resolver
 class DnsCheckService:
     async def run_dns_check(self, root_domain: str) -> dict[str, Any]:
         try:
-            answers = dns.resolver.resolve(root_domain, "MX")
+            answers = await asyncio.to_thread(dns.resolver.resolve, root_domain, "MX")
             records = sorted(str(answer.exchange).rstrip(".") for answer in answers)
             return {"status": "ok", "mx_records": records}
         except Exception as exc:  # noqa: BLE001

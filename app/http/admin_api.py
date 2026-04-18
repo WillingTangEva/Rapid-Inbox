@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from app.auth.permissions import PermissionContext
-from app.http.sse import LIVE_SSE_EVENT_TYPES, encode_sse, recent_smtp_sessions, smtp_live_snapshot
+from app.http.sse import LIVE_SSE_EVENT_TYPES, recent_smtp_sessions, smtp_live_snapshot, stream_smtp_live_events
 from app.ingest.storage import utc_now
 from app.services.dns_check import DnsCheckService
 
@@ -170,16 +169,12 @@ async def live_page(request: Request) -> Response:
 @router.get("/api/v1/admin/live/smtp/stream")
 async def smtp_stream(
     request: Request,
-    admin: PermissionContext = Depends(require_admin_live_access),
+    _admin: PermissionContext = Depends(require_admin_live_access),
 ) -> StreamingResponse:
-    async def event_source() -> AsyncIterator[str]:
-        for event in smtp_live_snapshot(request.app.state.runtime):
-            yield encode_sse(event)
-
     return StreamingResponse(
-        event_source(),
+        stream_smtp_live_events(request.app.state.runtime),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache"},
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
