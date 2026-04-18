@@ -486,6 +486,7 @@ class RapidInboxRuntime:
         await self.writer.execute(lambda connection: self._apply_parsed_message(connection, task.message_id, parsed))
 
     def _apply_parsed_message(self, connection: sqlite3.Connection, message_id: str, parsed: ParsedMessage) -> None:
+        self._delete_attachment_files(connection, message_id)
         connection.execute(
             """
             UPDATE messages
@@ -563,9 +564,10 @@ class RapidInboxRuntime:
                     int(attachment.is_inline),
                     utc_now(),
                 ),
-            )
+        )
 
     def _mark_message_parse_failed(self, connection: sqlite3.Connection, message_id: str, parse_error: str) -> None:
+        self._delete_attachment_files(connection, message_id)
         connection.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
         connection.execute(
             """
@@ -591,6 +593,18 @@ class RapidInboxRuntime:
             """,
             (utc_now(), parse_error, message_id),
         )
+
+    def _delete_attachment_files(self, connection: sqlite3.Connection, message_id: str) -> None:
+        rows = connection.execute(
+            """
+            SELECT storage_path
+            FROM attachments
+            WHERE message_id = ?
+            """,
+            (message_id,),
+        ).fetchall()
+        for row in rows:
+            self.storage.resolve(str(row["storage_path"])).unlink(missing_ok=True)
 
     def _apply_recovery_manifest(self, connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
         message_id = str(manifest["message_id"])

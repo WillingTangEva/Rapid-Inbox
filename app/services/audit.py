@@ -101,6 +101,7 @@ class AuditService:
             item = dict(row)
             details_json = item.get("details_json")
             item["details"] = json.loads(details_json) if details_json else None
+            item.pop("details_json", None)
             items.append(item)
         return {"items": items}
 

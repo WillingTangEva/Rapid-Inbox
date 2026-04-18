@@ -7,6 +7,7 @@ import pytest
 
 from app.config import Settings
 from app.db.connection import connect_database
+from app.ingest.parser import ParsedMessage
 from app.main import create_app
 from app.smtp.handler import RapidInboxHandler
 
@@ -52,6 +53,7 @@ async def test_admin_api_supports_message_reparse_and_settings_update(admin_clie
     assert settings_response.status_code == 200
     assert audit.status_code == 200
     assert any(item["action"] == "settings.update" for item in audit.json()["items"])
+    assert all("details_json" not in item for item in audit.json()["items"])
 
 
 @pytest.mark.asyncio
@@ -191,6 +193,18 @@ async def test_admin_api_reparse_failure_clears_stale_parsed_fields(runtime, mon
     mailbox = await runtime.get_mailbox_view("foo@adb.com")
     message_id = mailbox["items"][0]["message_id"]
 
+    with connect_database(runtime.settings.database_path) as connection:
+        attachment_row = connection.execute(
+            """
+            SELECT storage_path
+            FROM attachments
+            WHERE message_id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+    attachment_path = runtime.storage.resolve(attachment_row["storage_path"])
+    assert attachment_path.exists() is True
+
     def failing_parse_message(*args, **kwargs):
         raise ValueError("parse failed")
 
@@ -229,6 +243,7 @@ async def test_admin_api_reparse_failure_clears_stale_parsed_fields(runtime, mon
             (message_id,),
         ).fetchone()
 
+    assert attachment_path.exists() is False
     assert row["parse_status"] == "failed"
     assert row["parse_error"] == "parse failed"
     assert row["message_id_header"] is None
@@ -246,6 +261,97 @@ async def test_admin_api_reparse_failure_clears_stale_parsed_fields(runtime, mon
     assert row["html_body_path"] is None
     assert row["headers_json"] is None
     assert attachment_count["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_api_successful_reparse_replaces_attachment_files(runtime) -> None:
+    attachment_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: Attachment Mail\r\n"
+        b"Message-ID: <attachment-success@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:00:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=boundary99\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Attachment body.\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain\r\n"
+        b'Content-Disposition: attachment; filename="report.txt"\r\n'
+        b"\r\n"
+        b"attachment contents\r\n"
+        b"\r\n"
+        b"--boundary99--\r\n"
+    )
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_reparse_success",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=attachment_email_bytes,
+        smtp_session_id="smtp_reparse_success",
+    )
+    await runtime.drain_parser_queue()
+    mailbox = await runtime.get_mailbox_view("foo@adb.com")
+    message_id = mailbox["items"][0]["message_id"]
+
+    with connect_database(runtime.settings.database_path) as connection:
+        attachment_row = connection.execute(
+            """
+            SELECT storage_path
+            FROM attachments
+            WHERE message_id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+    old_attachment_path = runtime.storage.resolve(attachment_row["storage_path"])
+    assert old_attachment_path.exists() is True
+
+    def successful_parse_message(*args, **kwargs):
+        return ParsedMessage(
+            message_id_header="<reparsed@example.com>",
+            subject="Reparsed Attachment Mail",
+            from_name="Sender",
+            from_addr="sender@example.com",
+            reply_to=None,
+            date_header="Sat, 18 Apr 2026 20:00:00 +0000",
+            has_text=True,
+            has_html=False,
+            has_attachments=False,
+            attachment_count=0,
+            text_preview="Reparsed attachment body.",
+            text_body_path=None,
+            html_body_path=None,
+            headers_json="[]",
+            attachments=[],
+        )
+
+    runtime.parser.parse_message = successful_parse_message
+
+    await runtime.messages.reparse_message(message_id)
+    await runtime.drain_parser_queue()
+
+    with connect_database(runtime.settings.database_path) as connection:
+        attachment_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM attachments WHERE message_id = ?",
+            (message_id,),
+        ).fetchone()
+        row = connection.execute(
+            "SELECT parse_status, subject FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+
+    assert old_attachment_path.exists() is False
+    assert attachment_count["count"] == 0
+    assert row["parse_status"] == "parsed"
+    assert row["subject"] == "Reparsed Attachment Mail"
 
 
 @pytest.mark.asyncio
