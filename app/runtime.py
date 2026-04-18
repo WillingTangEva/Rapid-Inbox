@@ -479,16 +479,7 @@ class RapidInboxRuntime:
             )
         except Exception as exc:
             await self.writer.execute(
-                lambda connection: connection.execute(
-                    """
-                    UPDATE messages
-                    SET parse_status = 'failed',
-                        parse_error = ?,
-                        indexed_at = ?
-                    WHERE id = ?
-                    """,
-                    (str(exc), utc_now(), task.message_id),
-                )
+                lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
             )
             return
 
@@ -573,6 +564,33 @@ class RapidInboxRuntime:
                     utc_now(),
                 ),
             )
+
+    def _mark_message_parse_failed(self, connection: sqlite3.Connection, message_id: str, parse_error: str) -> None:
+        connection.execute("DELETE FROM attachments WHERE message_id = ?", (message_id,))
+        connection.execute(
+            """
+            UPDATE messages
+            SET message_id_header = NULL,
+                subject = NULL,
+                from_name = NULL,
+                from_addr = NULL,
+                reply_to = NULL,
+                date_header = NULL,
+                indexed_at = ?,
+                parse_status = 'failed',
+                parse_error = ?,
+                has_text = 0,
+                has_html = 0,
+                has_attachments = 0,
+                attachment_count = 0,
+                text_preview = NULL,
+                text_body_path = NULL,
+                html_body_path = NULL,
+                headers_json = NULL
+            WHERE id = ?
+            """,
+            (utc_now(), parse_error, message_id),
+        )
 
     def _apply_recovery_manifest(self, connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
         message_id = str(manifest["message_id"])

@@ -102,11 +102,15 @@ class SettingsService:
     def _coerce_positive_int(self, key: str, value: Any) -> int:
         if isinstance(value, bool):
             raise ValueError(f"invalid {key}")
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"invalid {key}")
         try:
             normalized = int(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"invalid {key}") from exc
         if normalized < 1:
+            raise ValueError(f"invalid {key}")
+        if isinstance(value, float) and normalized != value:
             raise ValueError(f"invalid {key}")
         return normalized
 

@@ -59,7 +59,15 @@ class DomainService:
         max_message_size_bytes: int = 52_428_800,
     ) -> dict[str, Any]:
         now = utc_now()
-        root_domain_ascii = normalize_domain(root_domain)
+        root_domain_ascii = self._coerce_root_domain(root_domain)
+        accept_exact = self._coerce_bool("accept_exact", accept_exact)
+        accept_subdomains = self._coerce_bool("accept_subdomains", accept_subdomains)
+        public_web_enabled = self._coerce_bool("public_web_enabled", public_web_enabled)
+        public_api_enabled = self._coerce_bool("public_api_enabled", public_api_enabled)
+        local_part_case_sensitive = self._coerce_bool("local_part_case_sensitive", local_part_case_sensitive)
+        is_active = self._coerce_bool("is_active", is_active)
+        max_message_size_bytes = self._coerce_positive_int("max_message_size_bytes", max_message_size_bytes)
+        plus_addressing_mode = self._coerce_plus_addressing_mode(plus_addressing_mode)
 
         def operation(connection: sqlite3.Connection) -> int:
             cursor = connection.execute(
@@ -162,6 +170,43 @@ class DomainService:
 
     def match_address(self, address: str) -> DomainMatch | None:
         return self._matcher.match_address(address)
+
+    def _coerce_root_domain(self, value: Any) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("invalid root_domain")
+        try:
+            return normalize_domain(value)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("invalid root_domain") from exc
+
+    def _coerce_bool(self, field_name: str, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and not isinstance(value, bool) and value in (0, 1):
+            return bool(value)
+        raise ValueError(f"invalid {field_name}")
+
+    def _coerce_plus_addressing_mode(self, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("invalid plus_addressing_mode")
+        if value not in {"keep", "strip"}:
+            raise ValueError("invalid plus_addressing_mode")
+        return value
+
+    def _coerce_positive_int(self, field_name: str, value: Any) -> int:
+        if isinstance(value, bool):
+            raise ValueError(f"invalid {field_name}")
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"invalid {field_name}")
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid {field_name}") from exc
+        if normalized < 1:
+            raise ValueError(f"invalid {field_name}")
+        if isinstance(value, float) and normalized != value:
+            raise ValueError(f"invalid {field_name}")
+        return normalized
 
     def _normalize_domain_row(self, row: sqlite3.Row) -> dict[str, Any]:
         payload = dict(row)

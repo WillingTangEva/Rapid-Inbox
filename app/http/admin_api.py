@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -92,16 +93,19 @@ async def create_domain(
         raise HTTPException(status_code=422, detail="root_domain is required")
     settings = runtime.get_settings()
 
-    created = await runtime.create_domain(
-        root_domain,
-        accept_exact=payload.get("accept_exact", True),
-        accept_subdomains=payload.get("accept_subdomains", True),
-        public_web_enabled=payload.get("public_web_enabled", True),
-        public_api_enabled=payload.get("public_api_enabled", True),
-        plus_addressing_mode=payload.get("plus_addressing_mode", "keep"),
-        local_part_case_sensitive=payload.get("local_part_case_sensitive", False),
-        max_message_size_bytes=payload.get("max_message_size_bytes", settings["max_message_size_bytes"]),
-    )
+    try:
+        created = await runtime.create_domain(
+            root_domain,
+            accept_exact=payload.get("accept_exact", True),
+            accept_subdomains=payload.get("accept_subdomains", True),
+            public_web_enabled=payload.get("public_web_enabled", True),
+            public_api_enabled=payload.get("public_api_enabled", True),
+            plus_addressing_mode=payload.get("plus_addressing_mode", "keep"),
+            local_part_case_sensitive=payload.get("local_part_case_sensitive", False),
+            max_message_size_bytes=payload.get("max_message_size_bytes", settings["max_message_size_bytes"]),
+        )
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     await runtime.audit.log(
         "api_key",
         _audit_actor_ref(admin),

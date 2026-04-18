@@ -55,6 +55,19 @@ async def test_admin_api_supports_message_reparse_and_settings_update(admin_clie
 
 
 @pytest.mark.asyncio
+async def test_admin_api_rejects_invalid_domain_payload(admin_client) -> None:
+    response = await admin_client.post(
+        "/api/v1/admin/domains",
+        json={
+            "root_domain": "bad.adb.com",
+            "plus_addressing_mode": "bogus",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_admin_api_read_endpoints_accept_read_scopes(admin_client, runtime) -> None:
     await runtime.create_domain("adb.com")
     read_only_key = await runtime.api_keys.create_key(
@@ -106,6 +119,102 @@ async def test_admin_mailbox_service_normalizes_boolean_flags(runtime, sample_em
     assert isinstance(mailbox["is_hidden"], bool)
     assert mailbox["public_enabled"] is True
     assert mailbox["is_hidden"] is False
+
+
+@pytest.mark.asyncio
+async def test_admin_api_reparse_failure_clears_stale_parsed_fields(runtime, monkeypatch) -> None:
+    attachment_email_bytes = (
+        b"From: Sender <sender@example.com>\r\n"
+        b"To: Foo <foo@adb.com>\r\n"
+        b"Subject: Attachment Mail\r\n"
+        b"Message-ID: <attachment@example.com>\r\n"
+        b"Date: Sat, 18 Apr 2026 20:00:00 +0000\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=boundary99\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Attachment body.\r\n"
+        b"\r\n"
+        b"--boundary99\r\n"
+        b"Content-Type: text/plain\r\n"
+        b'Content-Disposition: attachment; filename="report.txt"\r\n'
+        b"\r\n"
+        b"attachment contents\r\n"
+        b"\r\n"
+        b"--boundary99--\r\n"
+    )
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_reparse_failure",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=attachment_email_bytes,
+        smtp_session_id="smtp_reparse_failure",
+    )
+    await runtime.drain_parser_queue()
+    mailbox = await runtime.get_mailbox_view("foo@adb.com")
+    message_id = mailbox["items"][0]["message_id"]
+
+    def failing_parse_message(*args, **kwargs):
+        raise ValueError("parse failed")
+
+    monkeypatch.setattr(runtime.parser, "parse_message", failing_parse_message)
+
+    await runtime.messages.reparse_message(message_id)
+    await runtime.drain_parser_queue()
+
+    with connect_database(runtime.settings.database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                parse_status,
+                parse_error,
+                message_id_header,
+                subject,
+                from_name,
+                from_addr,
+                reply_to,
+                date_header,
+                has_text,
+                has_html,
+                has_attachments,
+                attachment_count,
+                text_preview,
+                text_body_path,
+                html_body_path,
+                headers_json
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        attachment_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM attachments WHERE message_id = ?",
+            (message_id,),
+        ).fetchone()
+
+    assert row["parse_status"] == "failed"
+    assert row["parse_error"] == "parse failed"
+    assert row["message_id_header"] is None
+    assert row["subject"] is None
+    assert row["from_name"] is None
+    assert row["from_addr"] is None
+    assert row["reply_to"] is None
+    assert row["date_header"] is None
+    assert row["has_text"] == 0
+    assert row["has_html"] == 0
+    assert row["has_attachments"] == 0
+    assert row["attachment_count"] == 0
+    assert row["text_preview"] is None
+    assert row["text_body_path"] is None
+    assert row["html_body_path"] is None
+    assert row["headers_json"] is None
+    assert attachment_count["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -214,3 +323,13 @@ async def test_admin_api_settings_allowlist_rejects_unsupported_keys_and_filters
     assert rejected.status_code == 422
     assert "admin_token" not in listed.json()
     assert set(listed.json()) == {"max_message_size_bytes", "max_recipients_per_message"}
+
+
+@pytest.mark.asyncio
+async def test_admin_api_rejects_fractional_settings_values(admin_client) -> None:
+    response = await admin_client.patch(
+        "/api/v1/admin/settings",
+        json={"max_recipients_per_message": 12.5},
+    )
+
+    assert response.status_code == 422
