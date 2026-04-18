@@ -162,7 +162,7 @@ async def live_page(request: Request) -> Response:
             "admin": admin,
             "events": initial_events,
             "sessions": recent_smtp_sessions(runtime),
-            "stream_url": f"/api/v1/admin/live/smtp/stream?after_seq={live_cursor}",
+            "stream_url": f"/api/v1/admin/live/smtp/stream?after_cursor={live_cursor}",
             "live_event_types": LIVE_SSE_EVENT_TYPES,
         },
     )
@@ -172,10 +172,10 @@ async def live_page(request: Request) -> Response:
 async def smtp_stream(
     request: Request,
     _admin: PermissionContext = Depends(require_admin_live_access),
-    after_seq: int | None = Query(default=None, ge=0),
+    after_cursor: str | None = Query(default=None),
 ) -> StreamingResponse:
     return StreamingResponse(
-        stream_smtp_live_events(request.app.state.runtime, after_seq=after_seq),
+        stream_smtp_live_events(request.app.state.runtime, after_cursor=after_cursor),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

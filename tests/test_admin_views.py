@@ -44,7 +44,7 @@ async def test_admin_live_page_uses_cursor_based_stream_url(app_client, runtime)
 
     assert response.status_code == 200
     assert "Live activity" in response.text
-    assert "after_seq=0" in response.text
+    assert "after_cursor=" in response.text
 
 
 @pytest.mark.asyncio

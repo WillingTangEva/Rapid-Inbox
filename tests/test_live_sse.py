@@ -99,7 +99,8 @@ async def test_live_sse_stream_skips_initial_history_after_cursor(runtime, sampl
         smtp_session_id="smtp_live_1",
     )
 
-    stream = stream_smtp_live_events(runtime, after_seq=0, poll_interval=0.01)
+    _, cursor = runtime.live_state.snapshot_state()
+    stream = stream_smtp_live_events(runtime, after_cursor=cursor, poll_interval=0.01)
     pending_event: asyncio.Task[str] | None = None
     try:
         pending_event = asyncio.create_task(anext(stream))
@@ -119,3 +120,24 @@ async def test_live_sse_stream_skips_initial_history_after_cursor(runtime, sampl
 
     assert '"session_id": "smtp_live_2"' in follow_up
     assert '"type": "queued"' in follow_up
+
+
+@pytest.mark.asyncio
+async def test_live_sse_stream_falls_back_to_initial_history_for_stale_generation(
+    runtime, sample_email_bytes: bytes
+) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+        smtp_session_id="smtp_live_1",
+    )
+
+    stream = stream_smtp_live_events(runtime, after_cursor="deadbeef:99", poll_interval=0.01)
+    try:
+        event = await asyncio.wait_for(anext(stream), timeout=0.05)
+    finally:
+        await stream.aclose()
+
+    assert "rcpt_accepted" in event or "queued" in event

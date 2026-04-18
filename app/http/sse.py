@@ -22,26 +22,45 @@ def smtp_live_snapshot(runtime, *, history_limit: int = 25) -> list[dict[str, An
     return _recent_message_events(runtime, limit=history_limit)
 
 
+def _parse_live_cursor(cursor: str | None) -> tuple[str, int] | None:
+    if cursor is None:
+        return None
+    try:
+        generation, seq_text = cursor.rsplit(":", 1)
+        if not generation:
+            return None
+        seq = int(seq_text)
+    except (AttributeError, ValueError):
+        return None
+    if seq < 0:
+        return None
+    return generation, seq
+
+
 async def stream_smtp_live_events(
     runtime,
     *,
     poll_interval: float = 0.25,
     history_limit: int = 25,
-    after_seq: int | None = None,
+    after_cursor: str | None = None,
 ) -> AsyncIterator[str]:
-    if after_seq is None:
-        events, last_seq = runtime.live_state.snapshot_state()
+    live_state = runtime.live_state
+    parsed_cursor = _parse_live_cursor(after_cursor)
+    generation_matches = parsed_cursor is not None and parsed_cursor[0] == live_state.generation
+
+    if generation_matches:
+        last_seq = parsed_cursor[1]
+    else:
+        events, cursor = live_state.snapshot_state()
         if not events:
             events = _recent_message_events(runtime, limit=history_limit)
-            last_seq = 0
-
         for event in events:
             yield encode_sse(event)
-    else:
-        last_seq = after_seq
+        parsed_snapshot_cursor = _parse_live_cursor(cursor)
+        last_seq = parsed_snapshot_cursor[1] if parsed_snapshot_cursor is not None else 0
 
     while True:
-        new_events = runtime.live_state.snapshot_since(last_seq)
+        new_events = live_state.snapshot_since(last_seq)
         if new_events:
             last_seq = int(new_events[-1].get("seq", last_seq))
             for event in new_events:
