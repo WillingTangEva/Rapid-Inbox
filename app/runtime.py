@@ -493,6 +493,9 @@ class RapidInboxRuntime:
                     m.id AS message_id,
                     m.subject,
                     m.from_addr,
+                    m.text_preview,
+                    m.text_body_path,
+                    m.html_body_path,
                     m.has_attachments,
                     m.parse_status
                 FROM message_deliveries AS d

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
+from email.policy import SMTP
 from itertools import count
 
 import httpx
@@ -23,6 +25,27 @@ def _mail_bytes(subject: str, message_id: str, body: str) -> bytes:
         "\r\n"
         f"{body}\r\n"
     ).encode("utf-8")
+
+
+def _rich_mail_bytes(
+    *,
+    subject: str,
+    message_id: str,
+    from_addr: str,
+    body: str,
+    subtype: str = "plain",
+) -> bytes:
+    message = EmailMessage()
+    message["From"] = from_addr
+    message["To"] = "Foo <foo@adb.com>"
+    message["Subject"] = subject
+    message["Message-ID"] = f"<{message_id}>"
+    message["Date"] = "Sat, 18 Apr 2026 20:00:00 +0000"
+    if subtype == "html":
+        message.set_content(body, subtype="html")
+    else:
+        message.set_content(body)
+    return message.as_bytes(policy=SMTP)
 
 
 def _patch_sequenced_utc_now(monkeypatch) -> None:
@@ -213,3 +236,132 @@ async def test_public_mailbox_routes_respect_mailbox_visibility_flags(
 
     assert web_response.status_code == 404
     assert api_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_mailbox_page_shows_copy_button_for_openai_verification_code(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="noreply@openai.com",
+        content=_rich_mail_bytes(
+            subject="Your OpenAI verification code",
+            message_id="openai-otp@example.com",
+            from_addr="OpenAI <noreply@openai.com>",
+            body="Your OpenAI verification code is 654321.\nUse this code to verify your email.\n",
+        ),
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get("/mail/foo@adb.com")
+
+    assert response.status_code == 200
+    assert "复制验证码" in response.text
+    assert "654321" in response.text
+
+
+@pytest.mark.asyncio
+async def test_public_mailbox_page_ignores_numbers_without_verification_keywords(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=_rich_mail_bytes(
+            subject="Order update",
+            message_id="non-otp@example.com",
+            from_addr="Store <sender@example.com>",
+            body="Order 123456 has shipped and will arrive tomorrow.\n",
+        ),
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get("/mail/foo@adb.com")
+
+    assert response.status_code == 200
+    assert 'class="btn btn-primary copy-code-btn"' not in response.text
+    assert "验证码 123456" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_public_mailbox_page_ignores_mail_with_multiple_candidate_codes(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=_rich_mail_bytes(
+            subject="Verification code candidates",
+            message_id="multi-otp@example.com",
+            from_addr="Example <sender@example.com>",
+            body="Your verification code could be 123456 or 654321 depending on region.\n",
+        ),
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get("/mail/foo@adb.com")
+
+    assert response.status_code == 200
+    assert 'class="btn btn-primary copy-code-btn"' not in response.text
+    assert "验证码 123456" not in response.text
+    assert "验证码 654321" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_public_mailbox_page_extracts_html_openai_verification_code(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="noreply@openai.com",
+        content=_rich_mail_bytes(
+            subject="Verify your email",
+            message_id="html-openai-otp@example.com",
+            from_addr="OpenAI <noreply@openai.com>",
+            subtype="html",
+            body=(
+                "<html><body><h1>Verify your email</h1>"
+                "<p>Your OpenAI verification code</p>"
+                "<table><tr><td>482951</td></tr></table>"
+                "</body></html>"
+            ),
+        ),
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get("/mail/foo@adb.com")
+
+    assert response.status_code == 200
+    assert "复制验证码" in response.text
+    assert "482951" in response.text
+
+
+@pytest.mark.asyncio
+async def test_public_mailbox_page_extracts_chatgpt_login_code_from_css_heavy_openai_html(app_client, runtime) -> None:
+    noisy_css = " ".join(
+        f".rule-{index} {{ font-family: Sohne; background-image: url(https://cdn.openai.com/font-{index}.woff2); }}"
+        for index in range(20)
+    )
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="noreply@tm.openai.com",
+        content=_rich_mail_bytes(
+            subject="Your temporary ChatGPT login code",
+            message_id="chatgpt-login-code@example.com",
+            from_addr="OpenAI <noreply@tm.openai.com>",
+            subtype="html",
+            body=(
+                "<html><head><style>"
+                f"{noisy_css}"
+                "</style></head><body>"
+                "<p>Enter this temporary verification code to continue:</p>"
+                "<p>138349</p>"
+                "</body></html>"
+            ),
+        ),
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get("/mail/foo@adb.com")
+
+    assert response.status_code == 200
+    assert 'class="btn btn-primary copy-code-btn"' in response.text
+    assert "138349" in response.text

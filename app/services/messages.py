@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import re
 import sqlite3
 from typing import Any
@@ -17,6 +18,34 @@ SAFE_INLINE_CONTENT_TYPES = {
 }
 
 _CID_REFERENCE_RE = re.compile(r'cid:([^"\'<>\s]+)', re.IGNORECASE)
+_EMAIL_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_CODE_CANDIDATE_RE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
+_TAG_RE = re.compile(r"<[^>]+>")
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+
+_VERIFICATION_CONTEXT_HINTS = (
+    "验证码",
+    "校验码",
+    "verification code",
+    "verify code",
+    "one-time code",
+    "one time code",
+    "otp",
+)
+
+_OPENAI_SENDERS = (
+    "noreply@openai.com",
+    "no-reply@openai.com",
+    "@openai.com",
+    ".openai.com",
+)
+
+_OPENAI_HINTS = (
+    "your openai verification code",
+    "your openai code",
+    "verify your email",
+    "openai verification code",
+)
 
 
 class MessageService:
@@ -85,12 +114,14 @@ class MessageService:
         request_ip: str | None = None,
     ) -> dict[str, Any]:
         canonical_mailbox_address = await self._require_public_surface_enabled(mailbox_address, surface)
-        return await self._runtime.get_mailbox_view(
+        mailbox = await self._runtime.get_mailbox_view(
             canonical_mailbox_address,
             limit=limit,
             offset=offset,
             request_ip=request_ip,
         )
+        items = [self._prepare_public_mailbox_item(item, surface=surface) for item in mailbox["items"]]
+        return {**mailbox, "items": items}
 
     async def get_public_delivery_detail(
         self,
@@ -246,6 +277,113 @@ class MessageService:
 
     def _normalize_content_type(self, value: Any) -> str:
         return str(value or "").split(";", 1)[0].strip().lower()
+
+    def _prepare_public_mailbox_item(self, item: dict[str, Any], *, surface: str) -> dict[str, Any]:
+        payload = dict(item)
+        if surface == "web":
+            payload["verification_code"] = self._extract_verification_code(payload)
+        payload.pop("text_preview", None)
+        payload.pop("text_body_path", None)
+        payload.pop("html_body_path", None)
+        return payload
+
+    def _extract_verification_code(self, item: dict[str, Any]) -> str | None:
+        if item.get("parse_status") != "parsed":
+            return None
+        if not self._looks_like_verification_candidate(item):
+            return None
+
+        sender = str(item.get("from_addr") or "")
+        subject = str(item.get("subject") or "")
+        text = self._build_verification_analysis_text(item)
+        if not text:
+            return None
+
+        context_candidates = self._find_context_matched_candidates(text)
+        if len(context_candidates) == 1:
+            return context_candidates[0]
+        if len(context_candidates) > 1:
+            return None
+
+        if self._is_openai_candidate_message(sender, subject, text):
+            all_candidates = self._find_code_candidates(text)
+            if len(all_candidates) == 1 and self._contains_openai_hint(text):
+                return all_candidates[0]
+
+        return None
+
+    def _looks_like_verification_candidate(self, item: dict[str, Any]) -> bool:
+        sender = str(item.get("from_addr") or "")
+        subject = str(item.get("subject") or "")
+        preview = str(item.get("text_preview") or "")
+        combined = "\n".join(part for part in (sender, subject, preview) if part).lower()
+        if any(hint in combined for hint in _VERIFICATION_CONTEXT_HINTS):
+            return True
+        return self._is_openai_candidate_message(sender, subject, preview)
+
+    def _build_verification_analysis_text(self, item: dict[str, Any]) -> str:
+        parts = [str(item.get("subject") or ""), str(item.get("text_preview") or "")]
+
+        text_body = self._safe_read_storage_text(item.get("text_body_path"))
+        if text_body:
+            parts.append(text_body)
+
+        html_body = self._safe_read_storage_text(item.get("html_body_path"))
+        if html_body:
+            parts.append(self._html_to_text(html_body))
+
+        return self._normalize_analysis_text("\n".join(part for part in parts if part))
+
+    def _safe_read_storage_text(self, storage_path: Any) -> str:
+        if not storage_path:
+            return ""
+        try:
+            return self._runtime.storage.read_text(str(storage_path)) or ""
+        except OSError:
+            return ""
+
+    def _html_to_text(self, html_body: str) -> str:
+        without_active_content = _SCRIPT_STYLE_RE.sub(" ", html_body)
+        stripped = _TAG_RE.sub(" ", without_active_content)
+        return html.unescape(stripped)
+
+    def _normalize_analysis_text(self, text: str) -> str:
+        without_addresses = _EMAIL_ADDRESS_RE.sub(" ", text)
+        return re.sub(r"\s+", " ", without_addresses).strip()
+
+    def _find_context_matched_candidates(self, text: str) -> list[str]:
+        matches: list[str] = []
+        for candidate in self._find_code_candidates(text):
+            if self._candidate_has_context(text, candidate):
+                matches.append(candidate)
+        return matches
+
+    def _find_code_candidates(self, text: str) -> list[str]:
+        ordered_unique: list[str] = []
+        for match in _CODE_CANDIDATE_RE.finditer(text):
+            candidate = match.group(1)
+            if candidate not in ordered_unique:
+                ordered_unique.append(candidate)
+        return ordered_unique
+
+    def _candidate_has_context(self, text: str, candidate: str) -> bool:
+        candidate_re = re.compile(rf"(?<!\d){re.escape(candidate)}(?!\d)")
+        lowered = text.lower()
+        for match in candidate_re.finditer(text):
+            window = lowered[max(0, match.start() - 80): min(len(lowered), match.end() + 80)]
+            if any(hint in window for hint in _VERIFICATION_CONTEXT_HINTS):
+                return True
+        return False
+
+    def _is_openai_candidate_message(self, sender: str, *content_parts: str) -> bool:
+        sender_lower = sender.lower()
+        if any(token in sender_lower for token in _OPENAI_SENDERS):
+            return True
+        return any("openai" in str(part).lower() for part in content_parts if part)
+
+    def _contains_openai_hint(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(hint in lowered for hint in _OPENAI_HINTS)
 
 
 __all__ = ["MessageService"]

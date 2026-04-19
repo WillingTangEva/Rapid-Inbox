@@ -3,56 +3,271 @@
 {% block head %}
 <style>
   .mailbox-header {
-    margin-bottom: 3rem;
+    margin-bottom: 3.5rem;
+    position: relative;
+    padding-bottom: 2rem;
+  }
+  
+  .mailbox-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.1), transparent);
+  }
+  
+  .top-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+  }
+  
+  .mailbox-title-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
   }
   
   .mailbox-title {
-    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-size: clamp(1.8rem, 4vw, 3rem);
     font-weight: 800;
-    margin-bottom: 1rem;
     word-break: break-all;
-    background: linear-gradient(135deg, #ffffff, #94a3b8);
+    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 50%, #94a3b8 100%);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
+    margin: 0;
   }
   
+  .copy-address-btn {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--primary);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .copy-address-btn:hover {
+    background: rgba(59, 130, 246, 0.2);
+    transform: translateY(-2px);
+  }
+  
+  .copy-address-btn.copied {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.3);
+  }
+
   .mailbox-meta {
     display: flex;
     flex-wrap: wrap;
     gap: 1rem;
     align-items: center;
-    margin-bottom: 1.5rem;
   }
   
-  .action-bar {
+  .meta-pill {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.4rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    backdrop-filter: blur(10px);
+  }
+  
+  .meta-pill strong {
+    color: var(--text-main);
+  }
+
+  .mail-row {
     display: flex;
-    gap: 1rem;
-    margin-bottom: 2rem;
+    flex-direction: column;
+    margin-bottom: 1.5rem;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 1rem;
+    transition: all 0.3s;
+    overflow: hidden;
   }
-  
+
+  .mail-row:hover {
+    background: rgba(30, 41, 59, 0.6);
+    border-color: rgba(59, 130, 246, 0.3);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(59, 130, 246, 0.1);
+    transform: translateY(-2px);
+  }
+
   .mail-item-link {
     text-decoration: none;
-    display: block;
-    margin-bottom: 1rem;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem;
   }
   
+  @media (min-width: 768px) {
+    .mail-row {
+      flex-direction: row;
+      align-items: stretch;
+    }
+    .mail-item-link {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  .mail-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+    gap: 1rem;
+  }
+
+  .mail-subject {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+  }
+
+  .mail-meta-info {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  
+  .mail-sender {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   .status-badge {
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
     font-size: 0.75rem;
-    font-weight: bold;
+    font-weight: 600;
     border: 1px solid transparent;
+    white-space: nowrap;
   }
   
   .status-parsed { color: #10b981; background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.2); }
   .status-failed { color: #ef4444; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.2); }
   .status-pending { color: #f59e0b; background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.2); }
+
+  .code-shortcut {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 1.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    min-width: 220px;
+  }
   
+  @media (min-width: 768px) {
+    .code-shortcut {
+      border-top: none;
+      border-left: 1px solid rgba(255, 255, 255, 0.05);
+    }
+  }
+
+  .code-value {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 1.75rem;
+    font-weight: 800;
+    color: #10b981;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.75rem;
+    text-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+  }
+
+  .copy-code-btn {
+    width: 100%;
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+    border-radius: 0.5rem;
+  }
+
+  .copy-code-btn.is-copied {
+    background: linear-gradient(135deg, #10b981, #059669);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+  }
+
+  .copy-code-btn.is-failed {
+    background: rgba(239, 68, 68, 0.14);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    box-shadow: none;
+  }
+
   .pagination {
     display: flex;
     justify-content: center;
-    gap: 1rem;
-    margin-top: 3rem;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .page-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.75rem;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  
+  .page-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 5rem 2rem;
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.3) 0%, rgba(15, 23, 42, 0.3) 100%);
+    border-radius: 1.5rem;
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+  }
+  
+  .empty-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 1.5rem;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
   }
 </style>
 {% endblock %}
@@ -60,24 +275,37 @@
 {% block content %}
 <div data-aos="fade-up" data-aos-duration="600">
   <div class="mailbox-header">
-    <div class="action-bar">
-      <a href="/" class="btn btn-ghost" style="padding: 0.5rem 1rem; font-size: 0.9rem;">
-        ← 返回首页
+    <div class="top-actions">
+      <a href="/" class="btn btn-ghost" style="padding: 0.5rem 1rem; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.5rem;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+        返回首页
       </a>
+      <button onclick="window.location.reload()" class="btn btn-ghost" style="padding: 0.5rem 1rem; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.5rem;" title="刷新列表">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        刷新
+      </button>
     </div>
     
-    <div class="badge" style="margin-bottom: 1rem;">公开收件箱</div>
-    <h1 class="mailbox-title">{{ mailbox_address }}</h1>
+    <div class="badge" style="margin-bottom: 1.5rem;">实时接收中</div>
+    
+    <div class="mailbox-title-wrapper">
+      <h1 class="mailbox-title" id="mailbox-address-text">{{ mailbox_address }}</h1>
+      <button class="copy-address-btn" id="copy-address" title="复制邮箱地址">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      </button>
+    </div>
     
     <div class="mailbox-meta">
-      <span class="text-muted" style="font-size: 1.1rem;">共包含 <strong>{{ message_count }}</strong> 封邮件</span>
+      <div class="meta-pill">
+        共计 <strong>{{ message_count }}</strong> 封邮件
+      </div>
       {% if items %}
-        <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-muted); border-color: rgba(255,255,255,0.1);">
-          当前显示 {{ start_index }} - {{ end_index }}
-        </span>
-        <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-muted); border-color: rgba(255,255,255,0.1);">
-          第 {{ current_page }} / {{ total_pages }} 页，每页 {{ limit }} 封
-        </span>
+        <div class="meta-pill">
+          显示 <strong>{{ start_index }} - {{ end_index }}</strong>
+        </div>
+        <div class="meta-pill">
+          第 <strong>{{ current_page }} / {{ total_pages }}</strong> 页
+        </div>
       {% endif %}
     </div>
   </div>
@@ -85,52 +313,135 @@
   {% if items %}
     <div class="mail-list">
       {% for item in items %}
-        <a href="/mail/{{ mailbox_address }}/{{ item.delivery_id }}" class="mail-item-link" data-aos="fade-up" data-aos-delay="{{ loop.index0 * 50 }}">
-          <div class="mail-item">
+        <div class="mail-row" data-aos="fade-up" data-aos-delay="{{ loop.index0 * 50 }}">
+          <a href="/mail/{{ mailbox_address }}/{{ item.delivery_id }}" class="mail-item-link">
             <div class="mail-head">
-              <strong style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%;">
+              <h3 class="mail-subject">
                 {{ item.subject or "（无主题）" }}
-              </strong>
+              </h3>
               <span class="status-badge {% if item.parse_status == 'parsed' %}status-parsed{% elif item.parse_status == 'failed' %}status-failed{% else %}status-pending{% endif %}">
                 {{ cn_parse_status(item.parse_status) }}
               </span>
             </div>
             
-            <div class="mail-meta" style="margin-bottom: 1rem;">
-              <span>发件人: {{ item.from_addr or "未知" }}</span>
-              <span>{{ item.delivered_at }}</span>
+            <div class="mail-meta-info">
+              <div class="mail-sender">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                {{ item.from_addr or "未知发件人" }}
+              </div>
+              <div class="mail-time">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7; margin-right: 4px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                {{ item.delivered_at }}
+              </div>
             </div>
             
             <div class="tag-row">
-              <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-muted); border: none; font-size: 0.75rem;">
+              <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); font-size: 0.75rem;">
                 ID: {{ item.delivery_id }}
               </span>
               {% if item.has_attachments %}
-                <span class="badge badge-success" style="font-size: 0.75rem;">📎 包含附件</span>
+                <span class="badge badge-success" style="font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                  含附件
+                </span>
               {% endif %}
             </div>
-          </div>
-        </a>
+          </a>
+          
+          {% if item.verification_code %}
+            <div class="code-shortcut">
+              <div class="code-value">{{ item.verification_code }}</div>
+              <button
+                type="button"
+                class="btn btn-primary copy-code-btn"
+                data-code="{{ item.verification_code }}"
+                data-default-label="复制验证码"
+              >
+                复制验证码
+              </button>
+            </div>
+          {% endif %}
+        </div>
       {% endfor %}
     </div>
 
     <div class="pagination" data-aos="fade-up" data-aos-delay="200">
       {% if has_previous %}
-        <a class="btn btn-ghost" href="{{ previous_page_url | safe }}">← 较新的邮件</a>
+        <a class="page-btn" href="{{ previous_page_url | safe }}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          较新的邮件
+        </a>
       {% endif %}
-      <span class="text-muted" style="display:flex; align-items:center;">最近 {{ limit }} 封 / 共 {{ message_count }} 封</span>
+      
+      <span class="text-muted">当前页 {{ limit }} 封</span>
+      
       {% if has_next %}
-        <a class="btn btn-ghost" href="{{ next_page_url | safe }}">更早的邮件 →</a>
+        <a class="page-btn" href="{{ next_page_url | safe }}">
+          更早的邮件
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+        </a>
       {% endif %}
     </div>
   {% else %}
     <div class="empty-state" data-aos="zoom-in" data-aos-delay="100">
-      <div style="font-size: 3rem; margin-bottom: 1rem;">📭</div>
-      <h3 style="margin-bottom: 0.5rem; font-size: 1.5rem;">这个邮箱还没有收到邮件</h3>
-      <p class="text-muted" style="max-width: 400px; margin: 0 auto;">
-        向此地址发送邮件后，刷新页面即可查看。如果是第一次访问，该邮箱已被自动注册为可浏览的公开邮箱。
+      <div class="empty-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+      </div>
+      <h3 style="margin-bottom: 1rem; font-size: 1.5rem; color: var(--text-main);">收件箱空空如也</h3>
+      <p class="text-muted" style="max-width: 450px; margin: 0 auto; line-height: 1.6;">
+        向此邮箱地址发送邮件后，点击右上角的刷新按钮即可查看。<br>系统会自动接收并解析您的测试邮件。
       </p>
     </div>
   {% endif %}
 </div>
+
+<script>
+  // 复制验证码逻辑
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest(".copy-code-btn");
+    if (!button) return;
+
+    const code = button.dataset.code || "";
+    const defaultLabel = button.dataset.defaultLabel || "复制验证码";
+    if (!code) return;
+
+    button.disabled = true;
+    try {
+      await navigator.clipboard.writeText(code);
+      button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; margin-right:4px; vertical-align:text-bottom;"><polyline points="20 6 9 17 4 12"></polyline></svg> 已复制';
+      button.classList.remove("is-failed");
+      button.classList.add("is-copied");
+    } catch (error) {
+      button.textContent = "复制失败";
+      button.classList.remove("is-copied");
+      button.classList.add("is-failed");
+    }
+
+    window.setTimeout(() => {
+      button.disabled = false;
+      button.textContent = defaultLabel;
+      button.classList.remove("is-copied", "is-failed");
+    }, 2000);
+  });
+
+  // 复制邮箱地址逻辑
+  const copyAddressBtn = document.getElementById("copy-address");
+  if (copyAddressBtn) {
+    copyAddressBtn.addEventListener("click", async () => {
+      const addressText = document.getElementById("mailbox-address-text").innerText;
+      try {
+        await navigator.clipboard.writeText(addressText);
+        copyAddressBtn.classList.add("copied");
+        copyAddressBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        
+        setTimeout(() => {
+          copyAddressBtn.classList.remove("copied");
+          copyAddressBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }, 2000);
+      } catch (err) {
+        console.error("Failed to copy", err);
+      }
+    });
+  }
+</script>
 {% endblock %}
