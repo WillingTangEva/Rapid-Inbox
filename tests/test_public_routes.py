@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from email.policy import SMTP
+from functools import partial
 from itertools import count
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from app.config import default_settings
 import app.runtime as runtime_module
@@ -278,7 +280,7 @@ async def test_public_mailbox_page_ignores_numbers_without_verification_keywords
     response = await app_client.get("/mail/foo@adb.com")
 
     assert response.status_code == 200
-    assert 'class="btn btn-primary copy-code-btn"' not in response.text
+    assert 'data-code="123456"' not in response.text
     assert "验证码 123456" not in response.text
 
 
@@ -300,7 +302,8 @@ async def test_public_mailbox_page_ignores_mail_with_multiple_candidate_codes(ap
     response = await app_client.get("/mail/foo@adb.com")
 
     assert response.status_code == 200
-    assert 'class="btn btn-primary copy-code-btn"' not in response.text
+    assert 'data-code="123456"' not in response.text
+    assert 'data-code="654321"' not in response.text
     assert "验证码 123456" not in response.text
     assert "验证码 654321" not in response.text
 
@@ -365,3 +368,60 @@ async def test_public_mailbox_page_extracts_chatgpt_login_code_from_css_heavy_op
     assert response.status_code == 200
     assert 'class="btn btn-primary copy-code-btn"' in response.text
     assert "138349" in response.text
+
+
+@pytest.mark.asyncio
+async def test_public_mailbox_page_includes_websocket_bootstrap_on_first_page(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=_mail_bytes("Bootstrap", "bootstrap@example.com", "bootstrap"),
+    )
+    await runtime.drain_parser_queue()
+
+    response = await app_client.get("/mail/foo@adb.com")
+
+    assert response.status_code == 200
+    assert "/mail/foo@adb.com/ws?after_cursor=" in response.text
+    assert 'id="mail-list"' in response.text
+    assert 'data-live-enabled="true"' in response.text
+
+
+def test_public_mailbox_websocket_receives_new_delivery_and_parse_update(tmp_path) -> None:
+    settings = default_settings(tmp_path)
+    app = create_app(settings=settings)
+
+    with TestClient(app) as client:
+        runtime = app.state.runtime
+        client.portal.call(runtime.create_domain, "adb.com")
+
+        page = client.get("/mail/foo@adb.com")
+        assert page.status_code == 200
+        marker = "/mail/foo@adb.com/ws?after_cursor="
+        start = page.text.index(marker) + len(marker)
+        cursor = page.text[start: page.text.index('"', start)]
+
+        with client.websocket_connect(f"/mail/foo@adb.com/ws?after_cursor={cursor}") as websocket:
+            client.portal.call(
+                partial(
+                    runtime.accept_message,
+                    rcpt_tos=["foo@adb.com"],
+                    envelope_from="sender@example.com",
+                    content=_mail_bytes("Live Subject", "live@example.com", "live body"),
+                )
+            )
+
+            inserted = websocket.receive_json()
+            updated = websocket.receive_json()
+
+        assert inserted["type"] == "mailbox_delivery"
+        assert inserted["item"]["delivery_id"].startswith("dlv_")
+        assert inserted["item"]["parse_status"] == "pending"
+        assert inserted["item"]["subject"] is None
+        assert inserted["item"]["verification_code"] is None
+
+        assert updated["type"] == "mailbox_delivery_updated"
+        assert updated["item"]["delivery_id"] == inserted["item"]["delivery_id"]
+        assert updated["item"]["parse_status"] == "parsed"
+        assert updated["item"]["subject"] == "Live Subject"

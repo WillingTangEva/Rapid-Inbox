@@ -297,12 +297,12 @@
     
     <div class="mailbox-meta">
       <div class="meta-pill">
-        共计 <strong>{{ message_count }}</strong> 封邮件
+        共计 <strong id="message-count-value">{{ message_count }}</strong> 封邮件
+      </div>
+      <div class="meta-pill" id="mailbox-range-pill" {% if not items %}style="display:none"{% endif %}>
+        显示 <strong><span id="range-start-value">{{ start_index }}</span> - <span id="range-end-value">{{ end_index }}</span></strong>
       </div>
       {% if items %}
-        <div class="meta-pill">
-          显示 <strong>{{ start_index }} - {{ end_index }}</strong>
-        </div>
         <div class="meta-pill">
           第 <strong>{{ current_page }} / {{ total_pages }}</strong> 页
         </div>
@@ -310,10 +310,17 @@
     </div>
   </div>
 
-  {% if items %}
-    <div class="mail-list">
+    <div
+      class="mail-list"
+      id="mail-list"
+      data-mailbox-address="{{ mailbox_address }}"
+      data-limit="{{ limit }}"
+      data-live-enabled="{{ 'true' if mailbox_live_enabled else 'false' }}"
+      data-live-url="{{ mailbox_live_url }}"
+      {% if not items %}style="display:none"{% endif %}
+    >
       {% for item in items %}
-        <div class="mail-row" data-aos="fade-up" data-aos-delay="{{ loop.index0 * 50 }}">
+        <div class="mail-row" data-aos="fade-up" data-aos-delay="{{ loop.index0 * 50 }}" data-delivery-id="{{ item.delivery_id }}">
           <a href="/mail/{{ mailbox_address }}/{{ item.delivery_id }}" class="mail-item-link">
             <div class="mail-head">
               <h3 class="mail-subject">
@@ -365,6 +372,7 @@
       {% endfor %}
     </div>
 
+  {% if items %}
     <div class="pagination" data-aos="fade-up" data-aos-delay="200">
       {% if has_previous %}
         <a class="page-btn" href="{{ previous_page_url | safe }}">
@@ -383,7 +391,7 @@
       {% endif %}
     </div>
   {% else %}
-    <div class="empty-state" data-aos="zoom-in" data-aos-delay="100">
+    <div class="empty-state" id="mailbox-empty-state" data-aos="zoom-in" data-aos-delay="100">
       <div class="empty-icon">
         <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
       </div>
@@ -396,6 +404,159 @@
 </div>
 
 <script>
+  const mailList = document.getElementById("mail-list");
+  const emptyState = document.getElementById("mailbox-empty-state");
+  const messageCountValue = document.getElementById("message-count-value");
+  const rangePill = document.getElementById("mailbox-range-pill");
+  const rangeStartValue = document.getElementById("range-start-value");
+  const rangeEndValue = document.getElementById("range-end-value");
+
+  const mailboxAddress = mailList?.dataset.mailboxAddress || "";
+  const pageLimit = Number(mailList?.dataset.limit || "0");
+  const mailboxLiveEnabled = mailList?.dataset.liveEnabled === "true";
+  const mailboxLiveUrl = mailList?.dataset.liveUrl || "";
+  let mailboxMessageCount = Number(messageCountValue?.textContent || "0");
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function parseStatusClass(status) {
+    if (status === "parsed") return "status-parsed";
+    if (status === "failed") return "status-failed";
+    return "status-pending";
+  }
+
+  function parseStatusLabel(status) {
+    if (status === "parsed") return "已解析";
+    if (status === "failed") return "解析失败";
+    return "解析中";
+  }
+
+  function renderAttachmentsBadge(item) {
+    if (!item.has_attachments) {
+      return "";
+    }
+    return `
+      <span class="badge badge-success" style="font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+        含附件
+      </span>
+    `;
+  }
+
+  function renderCodeShortcut(item) {
+    if (!item.verification_code) {
+      return "";
+    }
+    return `
+      <div class="code-shortcut">
+        <div class="code-value">${escapeHtml(item.verification_code)}</div>
+        <button
+          type="button"
+          class="btn btn-primary copy-code-btn"
+          data-code="${escapeHtml(item.verification_code)}"
+          data-default-label="复制验证码"
+        >
+          复制验证码
+        </button>
+      </div>
+    `;
+  }
+
+  function renderMailRow(item) {
+    const subject = item.subject || "（无主题）";
+    const sender = item.from_addr || "未知发件人";
+    return `
+      <div class="mail-row" data-delivery-id="${escapeHtml(item.delivery_id)}">
+        <a href="/mail/${encodeURIComponent(mailboxAddress)}/${encodeURIComponent(item.delivery_id)}" class="mail-item-link">
+          <div class="mail-head">
+            <h3 class="mail-subject">${escapeHtml(subject)}</h3>
+            <span class="status-badge ${parseStatusClass(item.parse_status)}">${parseStatusLabel(item.parse_status)}</span>
+          </div>
+          <div class="mail-meta-info">
+            <div class="mail-sender">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+              ${escapeHtml(sender)}
+            </div>
+            <div class="mail-time">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7; margin-right: 4px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              ${escapeHtml(item.delivered_at)}
+            </div>
+          </div>
+          <div class="tag-row">
+            <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); font-size: 0.75rem;">
+              ID: ${escapeHtml(item.delivery_id)}
+            </span>
+            ${renderAttachmentsBadge(item)}
+          </div>
+        </a>
+        ${renderCodeShortcut(item)}
+      </div>
+    `;
+  }
+
+  function findMailRow(deliveryId) {
+    if (!mailList) return null;
+    return Array.from(mailList.querySelectorAll(".mail-row")).find((row) => row.dataset.deliveryId === deliveryId) || null;
+  }
+
+  function updateRangePill() {
+    if (!rangePill || !rangeStartValue || !rangeEndValue || !mailList) return;
+    const visibleCount = mailList.querySelectorAll(".mail-row").length;
+    if (visibleCount === 0) {
+      rangePill.style.display = "none";
+      return;
+    }
+    rangePill.style.display = "";
+    rangeStartValue.textContent = "1";
+    rangeEndValue.textContent = String(visibleCount);
+  }
+
+  function updateMessageCount(delta) {
+    if (!messageCountValue) return;
+    mailboxMessageCount = Math.max(0, mailboxMessageCount + delta);
+    messageCountValue.textContent = String(mailboxMessageCount);
+  }
+
+  function ensureMailListVisible() {
+    if (mailList) {
+      mailList.style.display = "";
+    }
+    if (emptyState) {
+      emptyState.style.display = "none";
+    }
+  }
+
+  function trimMailListOverflow() {
+    if (!mailList || pageLimit <= 0) return;
+    const rows = mailList.querySelectorAll(".mail-row");
+    if (rows.length <= pageLimit) return;
+    rows[rows.length - 1].remove();
+  }
+
+  function upsertMailboxItem(eventType, item) {
+    if (!mailList || !item?.delivery_id) return;
+
+    const existingRow = findMailRow(item.delivery_id);
+    if (existingRow) {
+      existingRow.outerHTML = renderMailRow(item);
+      updateRangePill();
+      return;
+    }
+
+    ensureMailListVisible();
+    mailList.insertAdjacentHTML("afterbegin", renderMailRow(item));
+    trimMailListOverflow();
+    updateRangePill();
+    updateMessageCount(1);
+  }
+
   // 复制验证码逻辑
   document.addEventListener("click", async (event) => {
     const button = event.target.closest(".copy-code-btn");
@@ -441,6 +602,43 @@
       } catch (err) {
         console.error("Failed to copy", err);
       }
+    });
+  }
+
+  if (mailboxLiveEnabled && mailboxLiveUrl) {
+    let mailboxSocket = null;
+    let reconnectTimer = null;
+
+    const connectMailboxSocket = () => {
+      const socketUrl = new URL(mailboxLiveUrl, window.location.href);
+      socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+      mailboxSocket = new WebSocket(socketUrl);
+
+      mailboxSocket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (!payload?.item) return;
+          upsertMailboxItem(payload.type, payload.item);
+        } catch (error) {
+          console.error("Failed to handle mailbox live payload", error);
+        }
+      };
+
+      mailboxSocket.onerror = () => {
+        mailboxSocket?.close();
+      };
+
+      mailboxSocket.onclose = () => {
+        reconnectTimer = window.setTimeout(connectMailboxSocket, 1000);
+      };
+    };
+
+    connectMailboxSocket();
+    window.addEventListener("beforeunload", () => {
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      mailboxSocket?.close();
     });
   }
 </script>

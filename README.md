@@ -42,6 +42,8 @@ If you want to minimize pip backtracking and repeated resolver retries, prefer:
 
 ` .venv/bin/pip install -c constraints-dev.txt -e .[dev] `
 
+The public mailbox live-update feature uses WebSocket transport. The project now declares `websockets` as a runtime dependency, so if you pulled new changes into an existing virtualenv, rerun the install command above before restarting `rapid-inbox-http`.
+
 ## Notes
 
 - The HTTP runner starts the FastAPI app and the embedded `aiosmtpd` listener with Uvicorn.

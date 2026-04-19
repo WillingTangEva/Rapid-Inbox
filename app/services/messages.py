@@ -134,6 +134,22 @@ class MessageService:
         canonical_mailbox_address = await self._require_public_surface_enabled(mailbox_address, surface)
         return await self._runtime.get_delivery_detail(canonical_mailbox_address, delivery_id, request_ip=request_ip)
 
+    async def get_public_mailbox_item(
+        self,
+        mailbox_address: str,
+        delivery_id: str,
+        *,
+        surface: str,
+        request_ip: str | None = None,
+    ) -> dict[str, Any]:
+        canonical_mailbox_address = await self._require_public_surface_enabled(mailbox_address, surface)
+        item = await self._runtime.get_mailbox_delivery_item(
+            canonical_mailbox_address,
+            delivery_id,
+            request_ip=request_ip,
+        )
+        return self._prepare_public_mailbox_item(item, surface=surface)
+
     async def get_public_raw_message(
         self,
         mailbox_address: str,

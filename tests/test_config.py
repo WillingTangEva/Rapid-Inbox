@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import tomllib
 
 from app.config import Settings, default_settings
 
@@ -99,3 +100,13 @@ def test_default_settings_resolves_relative_paths_from_base_dir(tmp_path: Path) 
 
     assert settings.storage_root == tmp_path / "runtime" / "storage"
     assert settings.database_path == tmp_path / "runtime" / "data" / "app.db"
+
+
+def test_project_declares_websocket_runtime_dependency() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    pyproject = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+    constraints = (project_root / "constraints-dev.txt").read_text(encoding="utf-8")
+
+    assert any(dependency.startswith("websockets==") for dependency in dependencies)
+    assert "websockets==" in constraints

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+import asyncio
+
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 
 from app.http.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, build_pagination_context
@@ -18,6 +20,19 @@ def _message_service(request: Request) -> MessageService:
 def _attachment_service(request: Request) -> AttachmentService:
     runtime = request.app.state.runtime
     return AttachmentService(runtime, _message_service(request))
+
+
+def _parse_live_cursor(cursor: str | None) -> tuple[str, int] | None:
+    if cursor is None:
+        return None
+    try:
+        generation, seq_text = cursor.rsplit(":", 1)
+        if not generation:
+            return None
+        seq = int(seq_text)
+    except (AttributeError, ValueError):
+        return None
+    return generation, seq
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -57,6 +72,8 @@ async def mailbox_page(
         total_count=mailbox["message_count"],
         item_count=len(mailbox["items"]),
     )
+    _, live_cursor = request.app.state.runtime.live_state.snapshot_state()
+    mailbox_live_enabled = mailbox["offset"] == 0
     return request.app.state.templates.TemplateResponse(
         request,
         "public/mailbox.html",
@@ -65,9 +82,72 @@ async def mailbox_page(
             "mailbox_address": mailbox["mailbox"],
             "items": mailbox["items"],
             "message_count": mailbox["message_count"],
+            "mailbox_live_enabled": mailbox_live_enabled,
+            "mailbox_live_cursor": live_cursor if mailbox_live_enabled else "",
+            "mailbox_live_url": f"/mail/{mailbox['mailbox']}/ws?after_cursor={live_cursor}" if mailbox_live_enabled else "",
             **pagination,
         },
     )
+
+
+@router.websocket("/mail/{mailbox_address}/ws")
+async def mailbox_websocket(mailbox_address: str, websocket: WebSocket) -> None:
+    service = _message_service(websocket)
+    after_cursor = websocket.query_params.get("after_cursor")
+    try:
+        mailbox = await service.get_public_mailbox_view(
+            mailbox_address,
+            surface="web",
+            limit=1,
+            offset=0,
+        )
+    except LookupError:
+        await websocket.close(code=1008)
+        return
+
+    runtime = websocket.app.state.runtime
+    parsed_cursor = _parse_live_cursor(after_cursor)
+    if parsed_cursor is not None and parsed_cursor[0] == runtime.live_state.generation:
+        last_seq = max(parsed_cursor[1], 0)
+    else:
+        _, live_cursor = runtime.live_state.snapshot_state()
+        parsed_live_cursor = _parse_live_cursor(live_cursor)
+        last_seq = 0 if parsed_live_cursor is None else parsed_live_cursor[1]
+
+    canonical_mailbox = str(mailbox["mailbox"])
+    await websocket.accept()
+
+    try:
+        while True:
+            new_events = runtime.live_state.snapshot_since(last_seq)
+            if new_events:
+                last_seq = int(new_events[-1].get("seq", last_seq))
+                for event in new_events:
+                    event_type = str(event.get("type") or "")
+                    if event_type not in {"mailbox_delivery", "mailbox_delivery_updated"}:
+                        continue
+                    if str(event.get("mailbox") or "") != canonical_mailbox:
+                        continue
+                    delivery_id = str(event.get("delivery_id") or "")
+                    if not delivery_id:
+                        continue
+                    try:
+                        item = await service.get_public_mailbox_item(
+                            canonical_mailbox,
+                            delivery_id,
+                            surface="web",
+                        )
+                    except LookupError:
+                        continue
+                    if event_type == "mailbox_delivery" and str(event.get("parse_status") or "") == "pending":
+                        item["parse_status"] = "pending"
+                        item["subject"] = None
+                        item["verification_code"] = None
+                    await websocket.send_json({"type": event_type, "item": item})
+                continue
+            await asyncio.sleep(0.25)
+    except (WebSocketDisconnect, RuntimeError):
+        return
 
 
 @router.get("/mail/{mailbox_address}/{delivery_id}", response_class=HTMLResponse)

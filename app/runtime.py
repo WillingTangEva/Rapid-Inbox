@@ -209,7 +209,7 @@ class RapidInboxRuntime:
         self.storage.write_manifest(message_id, received_at, manifest_payload)
         self.storage.write_raw_message(message_id, received_at, content)
 
-        def operation(connection: sqlite3.Connection) -> list[str]:
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             if smtp_session_id is not None:
                 session_exists = connection.execute(
                     "SELECT 1 FROM smtp_sessions WHERE id = ?",
@@ -279,7 +279,7 @@ class RapidInboxRuntime:
                 ),
             )
 
-            delivery_ids: list[str] = []
+            delivery_events: list[dict[str, Any]] = []
             for rcpt_to, match in matches:
                 mailbox_id = self._upsert_mailbox(connection, match, received_at)
                 delivery_id = f"dlv_{uuid.uuid4().hex}"
@@ -295,11 +295,22 @@ class RapidInboxRuntime:
                     """,
                     (delivery_id, message_id, mailbox_id, rcpt_to, received_at),
                 )
-                delivery_ids.append(delivery_id)
+                delivery_events.append(
+                    {
+                        "delivery_id": delivery_id,
+                        "message_id": message_id,
+                        "mailbox": match.address_canonical,
+                        "rcpt_to": rcpt_to,
+                        "parse_status": "pending",
+                        "ts": received_at,
+                    }
+                )
 
-            return delivery_ids
+            return delivery_events
 
-        await self.writer.execute(operation)
+        delivery_events = await self.writer.execute(operation)
+        for event in delivery_events:
+            await self.live_state.publish({**event, "type": "mailbox_delivery"})
         await self.parse_queue.enqueue(ParseTask(message_id=message_id))
         return f"250 queued as {message_id}"
 
@@ -524,6 +535,42 @@ class RapidInboxRuntime:
             "next_offset": offset + limit if has_next else None,
         }
 
+    async def get_mailbox_delivery_item(
+        self,
+        mailbox_address: str,
+        delivery_id: str,
+        *,
+        request_ip: str | None = None,
+    ) -> dict[str, Any]:
+        match = self.domains.match_address(mailbox_address)
+        if match is None:
+            raise LookupError("mailbox domain not managed")
+
+        mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
+        with connect_database(self.settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    d.id AS delivery_id,
+                    d.delivered_at,
+                    m.id AS message_id,
+                    m.subject,
+                    m.from_addr,
+                    m.text_preview,
+                    m.text_body_path,
+                    m.html_body_path,
+                    m.has_attachments,
+                    m.parse_status
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                WHERE d.id = ? AND d.mailbox_id = ? AND d.status = 'active'
+                """,
+                (delivery_id, mailbox["id"]),
+            ).fetchone()
+        if row is None:
+            raise LookupError("delivery not found")
+        return dict(row)
+
     async def get_delivery_detail(self, mailbox_address: str, delivery_id: str, *, request_ip: str | None = None) -> dict[str, Any]:
         match = self.domains.match_address(mailbox_address)
         if match is None:
@@ -672,6 +719,7 @@ class RapidInboxRuntime:
                 lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
             )
             self._delete_attachment_files(attachment_paths)
+            await self._publish_mailbox_delivery_updates(task.message_id)
             return
 
         try:
@@ -685,12 +733,14 @@ class RapidInboxRuntime:
                 lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
             )
             self._delete_attachment_files(attachment_paths)
+            await self._publish_mailbox_delivery_updates(task.message_id)
             return
 
         attachment_paths = await self.writer.execute(
             lambda connection: self._apply_parsed_message(connection, task.message_id, parsed)
         )
         self._delete_attachment_files(attachment_paths)
+        await self._publish_mailbox_delivery_updates(task.message_id)
 
     def _apply_parsed_message(self, connection: sqlite3.Connection, message_id: str, parsed: ParsedMessage) -> list[str]:
         attachment_paths = self._collect_attachment_storage_paths(connection, message_id)
@@ -820,6 +870,41 @@ class RapidInboxRuntime:
                 self.storage.resolve(storage_path).unlink(missing_ok=True)
             except Exception:
                 continue
+
+    async def _publish_mailbox_delivery_updates(self, message_id: str) -> None:
+        for event in self._load_mailbox_delivery_update_events(message_id):
+            await self.live_state.publish({**event, "type": "mailbox_delivery_updated"})
+
+    def _load_mailbox_delivery_update_events(self, message_id: str) -> list[dict[str, Any]]:
+        with connect_database(self.settings.database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    d.id AS delivery_id,
+                    d.rcpt_to,
+                    d.delivered_at,
+                    m.id AS message_id,
+                    m.parse_status,
+                    mb.address_canonical AS mailbox
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                JOIN mailboxes AS mb ON mb.id = d.mailbox_id
+                WHERE d.message_id = ? AND d.status = 'active'
+                ORDER BY d.delivered_at ASC, d.id ASC
+                """,
+                (message_id,),
+            ).fetchall()
+        return [
+            {
+                "delivery_id": row["delivery_id"],
+                "message_id": row["message_id"],
+                "mailbox": row["mailbox"],
+                "rcpt_to": row["rcpt_to"],
+                "parse_status": row["parse_status"],
+                "ts": row["delivered_at"],
+            }
+            for row in rows
+        ]
 
     def _apply_recovery_manifest(self, connection: sqlite3.Connection, manifest: dict[str, Any]) -> None:
         message_id = str(manifest["message_id"])

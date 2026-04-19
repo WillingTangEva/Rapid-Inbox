@@ -62,8 +62,9 @@ async def stream_smtp_live_events(
 
     if replay_initial:
         events, cursor = live_state.snapshot_state()
-        if events:
-            for event in events:
+        smtp_events = [event for event in events if str(event.get("type") or "") in LIVE_SSE_EVENT_TYPES]
+        if smtp_events:
+            for event in smtp_events:
                 seq = int(event.get("seq", 0))
                 yield encode_sse(event, event_id=f"{live_state.generation}:{seq}")
             parsed_snapshot_cursor = _parse_live_cursor(cursor)
@@ -77,10 +78,12 @@ async def stream_smtp_live_events(
             last_seq = 0
 
     while True:
-        new_events = live_state.snapshot_since(last_seq)
-        if new_events:
-            last_seq = int(new_events[-1].get("seq", last_seq))
-            for event in new_events:
+        raw_events = live_state.snapshot_since(last_seq)
+        if raw_events:
+            last_seq = int(raw_events[-1].get("seq", last_seq))
+            for event in raw_events:
+                if str(event.get("type") or "") not in LIVE_SSE_EVENT_TYPES:
+                    continue
                 yield encode_sse(event, event_id=f"{live_state.generation}:{event['seq']}")
             continue
         await asyncio.sleep(poll_interval)
