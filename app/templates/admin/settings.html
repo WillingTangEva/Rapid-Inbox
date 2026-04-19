@@ -4,8 +4,9 @@
   <section class="card">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Settings</p>
-        <h2>System settings</h2>
+        <p class="eyebrow">系统设置</p>
+        <h2>当前运行参数</h2>
+        <p class="section-copy">这里展示系统当前的关键运行配置，方便核对接收限制与后台会话参数。</p>
       </div>
     </div>
     {% if settings_items %}
@@ -21,7 +22,7 @@
         {% endfor %}
       </dl>
     {% else %}
-      <p class="muted">No settings available.</p>
+      <div class="empty-state">当前没有可展示的系统设置。</div>
     {% endif %}
   </section>
 {% endblock %}

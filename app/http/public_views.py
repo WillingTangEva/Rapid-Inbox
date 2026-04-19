@@ -19,6 +19,18 @@ def _attachment_service(request: Request) -> AttachmentService:
     return AttachmentService(runtime, _message_service(request))
 
 
+@router.get("/", response_class=HTMLResponse)
+async def home_page(request: Request) -> HTMLResponse:
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "public/home.html",
+        {
+            "page_title": "首页",
+            "mailbox_example": "收件@示例域名.cn",
+        },
+    )
+
+
 @router.get("/mail/{mailbox_address}", response_class=HTMLResponse)
 async def mailbox_page(
     mailbox_address: str,
@@ -40,6 +52,7 @@ async def mailbox_page(
         request,
         "public/mailbox.html",
         {
+            "page_title": mailbox["mailbox"],
             "mailbox_address": mailbox["mailbox"],
             "items": mailbox["items"],
             "message_count": mailbox["message_count"],
@@ -72,6 +85,7 @@ async def message_page(mailbox_address: str, delivery_id: str, request: Request)
         detail = await service.get_public_delivery_detail(mailbox_address, delivery_id, surface="web")
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    detail["page_title"] = detail.get("subject") or "邮件详情"
     return request.app.state.templates.TemplateResponse(
         request,
         "public/message.html",
@@ -99,7 +113,7 @@ async def message_html_frame(mailbox_address: str, delivery_id: str, request: Re
     return request.app.state.templates.TemplateResponse(
         request,
         "public/html_frame.html",
-        {"srcdoc": srcdoc},
+        {"page_title": "网页预览", "srcdoc": srcdoc},
         headers={
             "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
         },

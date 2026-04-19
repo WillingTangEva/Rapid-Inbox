@@ -1,0 +1,135 @@
+{% extends "public/base.html" %}
+
+{% block hero %}
+  <section class="hero">
+    <article class="hero-panel">
+      <p class="eyebrow">首页</p>
+      <h1>把公开邮箱变成一条很快、很直接的访问路径。</h1>
+      <p class="lede">
+        输入邮箱地址即可打开公开收件箱，适合临时邮箱、调试邮箱、回调通知邮箱以及自动化验收场景。
+      </p>
+
+      <form class="lookup-form" id="mailbox-form">
+        <label for="mailbox-address">公开邮箱地址</label>
+        <div class="lookup-row">
+          <input
+            id="mailbox-address"
+            name="mailbox_address"
+            type="text"
+            inputmode="email"
+            autocomplete="off"
+            placeholder="例如 {{ mailbox_example }}"
+            required
+          />
+          <button class="button" type="submit">打开邮箱</button>
+        </div>
+        <p class="muted">系统会自动跳转到 `/mail/邮箱地址`，仅当对应域名启用了公开网页访问时可查看。</p>
+      </form>
+
+      <div class="tag-row">
+        <span class="badge">SMTP 极速收件</span>
+        <span class="badge">公开邮箱浏览</span>
+        <span class="badge">附件直接下载</span>
+      </div>
+    </article>
+
+    <aside class="aside-card">
+      <div>
+        <p class="eyebrow">怎么用</p>
+        <h2>三步就能打开一个邮箱</h2>
+      </div>
+      <ol>
+        <li>确认域名已经接入系统并开启公开网页访问。</li>
+        <li>输入完整邮箱地址，例如 `qa@adb.com`。</li>
+        <li>跳转后即可查看邮件列表、正文、网页预览和附件。</li>
+      </ol>
+      <a class="button button--ghost" href="/admin/login">前往管理后台</a>
+    </aside>
+  </section>
+{% endblock %}
+
+{% block content %}
+  <section class="grid three-up">
+    <article class="card">
+      <p class="eyebrow">浏览</p>
+      <h2>公开邮箱列表</h2>
+      <p class="section-copy">按时间倒序展示最新邮件，快速定位主题、发件人、状态和附件情况。</p>
+    </article>
+    <article class="card">
+      <p class="eyebrow">查看</p>
+      <h2>正文与网页预览</h2>
+      <p class="section-copy">纯文本正文直接展示，网页正文通过隔离预览框呈现，更适合调试通知邮件和验证码模板。</p>
+    </article>
+    <article class="card">
+      <p class="eyebrow">下载</p>
+      <h2>原始邮件与附件</h2>
+      <p class="section-copy">可直接下载原始 `.eml` 邮件和全部附件，方便存档、复查与二次处理。</p>
+    </article>
+  </section>
+
+  <section class="grid two-up">
+    <article class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">路径规范</p>
+          <h2>公开页面地址</h2>
+        </div>
+      </div>
+      <div class="kv-grid">
+        <div class="kv-item">
+          <span>邮箱列表</span>
+          <strong><code>/mail/&lt;邮箱地址&gt;</code></strong>
+        </div>
+        <div class="kv-item">
+          <span>邮件详情</span>
+          <strong><code>/mail/&lt;邮箱地址&gt;/&lt;delivery_id&gt;</code></strong>
+        </div>
+        <div class="kv-item">
+          <span>原始邮件</span>
+          <strong><code>/raw</code> 下载</strong>
+        </div>
+        <div class="kv-item">
+          <span>网页正文</span>
+          <strong><code>/html</code> 预览</strong>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">适用场景</p>
+          <h2>适合这些收件需求</h2>
+        </div>
+      </div>
+      <ul class="muted" style="margin:0; padding-left:1.15rem; line-height:1.8;">
+        <li>测试注册、登录、找回密码和验证码邮件。</li>
+        <li>接收来自第三方平台的通知、回执和工单。</li>
+        <li>为自动化流程准备无需密码的公开收件箱。</li>
+        <li>调试多域名、多子域名的 SMTP 收件配置。</li>
+      </ul>
+    </article>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    (() => {
+      const form = document.getElementById("mailbox-form");
+      const input = document.getElementById("mailbox-address");
+      if (!form || !input) {
+        return;
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!value) {
+          input.focus();
+          return;
+        }
+        window.location.href = `/mail/${encodeURIComponent(value)}`;
+      });
+    })();
+  </script>
+{% endblock %}

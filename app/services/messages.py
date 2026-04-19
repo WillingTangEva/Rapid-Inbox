@@ -143,7 +143,7 @@ class MessageService:
     def build_public_html_preview_document(self, html_body: str) -> str:
         return (
             "<!doctype html>"
-            '<html lang="en">'
+            '<html lang="zh-CN">'
             "<head>"
             '<meta charset="utf-8" />'
             '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; form-action \'none\'; connect-src \'none\'; object-src \'none\'; frame-src \'none\'; script-src \'none\'" />'

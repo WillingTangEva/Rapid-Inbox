@@ -37,6 +37,15 @@ def _patch_sequenced_utc_now(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_public_home_page_exposes_mailbox_entry_point(app_client) -> None:
+    response = await app_client.get("/")
+
+    assert response.status_code == 200
+    assert "把公开邮箱变成一条很快、很直接的访问路径。" in response.text
+    assert "打开邮箱" in response.text
+
+
+@pytest.mark.asyncio
 async def test_mailbox_page_and_public_api_show_received_message(tmp_path, sample_email_bytes: bytes) -> None:
     settings = default_settings(tmp_path)
     app = create_app(settings=settings)

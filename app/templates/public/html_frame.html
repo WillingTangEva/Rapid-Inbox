@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>HTML Preview - Rapid Inbox</title>
+    <title>{{ page_title or "网页预览" }} - {{ product_name }}</title>
     <style>
       html,
       body {
@@ -24,7 +24,7 @@
       sandbox
       referrerpolicy="no-referrer"
       srcdoc="{{ srcdoc | e }}"
-      title="Message HTML preview"
+      title="邮件网页正文预览"
     ></iframe>
   </body>
 </html>

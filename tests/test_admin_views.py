@@ -16,8 +16,8 @@ async def test_admin_login_and_dashboard_page_flow(app_client, runtime) -> None:
     )
 
     assert response.status_code == 200
-    assert "Rapid Inbox Admin" in response.text
-    assert "Domains" in response.text
+    assert "邮件接入与运维中心" in response.text
+    assert "域名" in response.text
     assert 'href="/admin/live"' in response.text
 
 
@@ -81,7 +81,7 @@ async def test_admin_live_page_uses_cursor_based_stream_url(app_client, runtime)
     response = await app_client.get("/admin/live")
 
     assert response.status_code == 200
-    assert "Live activity" in response.text
+    assert "实时收件活动" in response.text
     assert "after_cursor=" in response.text
 
 
@@ -93,7 +93,41 @@ async def test_admin_login_rejects_invalid_credentials_with_error(app_client) ->
     )
 
     assert response.status_code == 401
-    assert "Invalid username or password." in response.text
+    assert "用户名或密码不正确。" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_domains_page_can_create_domain_via_form(app_client, runtime) -> None:
+    login = await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+    response = await app_client.post(
+        "/admin/domains",
+        data={
+            "root_domain": "mail.adb.com",
+            "accept_exact": "1",
+            "accept_subdomains": "1",
+            "public_web_enabled": "1",
+            "public_api_enabled": "1",
+            "plus_addressing_mode": "keep",
+            "local_part_case_sensitive": "0",
+            "is_active": "1",
+            "max_message_size_bytes": "2048",
+        },
+    )
+
+    created = runtime.domains.list_domains()[0]
+    created_detail = runtime.domains.get_domain(created["id"])
+
+    assert login.status_code == 200
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/admin/domains/{created['id']}"
+    assert created["root_domain_ascii"] == "mail.adb.com"
+    assert created_detail["accept_subdomains"] is True
+    assert created_detail["public_web_enabled"] is True
+    assert created_detail["max_message_size_bytes"] == 2048
 
 
 @pytest.mark.asyncio

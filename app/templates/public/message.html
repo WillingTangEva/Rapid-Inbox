@@ -1,56 +1,165 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>{{ subject or "(no subject)" }} - Rapid Inbox</title>
-    <style>
-      body {
-        font-family: system-ui, sans-serif;
-        line-height: 1.5;
-      }
+{% extends "public/base.html" %}
 
-      iframe {
-        width: 100%;
-        min-height: 30rem;
-        border: 1px solid #d0d7de;
-        border-radius: 0.5rem;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>{{ subject or "(no subject)" }}</h1>
-    <p>{{ from_addr or "unknown" }}</p>
-    <p>{{ received_at }}</p>
-    <p>
-      <a href="/mail/{{ mailbox }}/{{ delivery_id }}/raw">Download raw message</a>
-    </p>
-    {% if text_body %}
+{% block hero %}
+  <section class="hero hero--compact">
+    <article class="hero-panel">
+      <p class="eyebrow">邮件详情</p>
+      <h1>{{ subject or "（无主题）" }}</h1>
+      <p class="lede">来自 {{ from_addr or "未知发件人" }}，投递到邮箱 {{ mailbox }}。</p>
+      <div class="tag-row">
+        <span
+          class="pill {% if parse_status == 'parsed' %}pill--success{% elif parse_status == 'failed' %}pill--danger{% else %}pill--warning{% endif %}"
+        >
+          {{ cn_parse_status(parse_status) }}
+        </span>
+        <span class="badge">{{ received_at }}</span>
+        <span class="badge">投递编号：{{ delivery_id }}</span>
+      </div>
+      <div class="button-row" style="margin-top:1.1rem;">
+        <a class="button button--ghost" href="/mail/{{ mailbox }}">返回邮箱</a>
+        <a class="button" href="/mail/{{ mailbox }}/{{ delivery_id }}/raw">下载原始邮件</a>
+      </div>
+    </article>
+
+    <aside class="aside-card">
+      <div>
+        <p class="eyebrow">邮件概览</p>
+        <h2>当前内容</h2>
+      </div>
+      <div class="kv-grid" style="grid-template-columns:1fr;">
+        <div class="kv-item">
+          <span>文本正文</span>
+          <strong>{{ "可查看" if text_body else "暂无" }}</strong>
+        </div>
+        <div class="kv-item">
+          <span>网页正文</span>
+          <strong>{{ "可预览" if html_body else "暂无" }}</strong>
+        </div>
+        <div class="kv-item">
+          <span>附件数量</span>
+          <strong>{{ attachments | length }}</strong>
+        </div>
+      </div>
+    </aside>
+  </section>
+{% endblock %}
+
+{% block content %}
+  <section class="card">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">摘要</p>
+        <h2>邮件基础信息</h2>
+      </div>
+    </div>
+    <div class="kv-grid">
+      <div class="kv-item">
+        <span>所属邮箱</span>
+        <strong>{{ mailbox }}</strong>
+      </div>
+      <div class="kv-item">
+        <span>发件人</span>
+        <strong>{{ from_addr or "未知发件人" }}</strong>
+      </div>
+      <div class="kv-item">
+        <span>接收时间</span>
+        <strong>{{ received_at }}</strong>
+      </div>
+      <div class="kv-item">
+        <span>解析状态</span>
+        <strong>{{ cn_parse_status(parse_status) }}</strong>
+      </div>
+    </div>
+  </section>
+
+  {% if parse_status == "pending" %}
+    <section class="notice">这封邮件仍在解析中。稍后刷新页面即可看到正文、附件或网页预览。</section>
+  {% elif parse_status == "failed" %}
+    <section class="notice">这封邮件在解析时发生错误，部分内容可能暂时不可用。</section>
+  {% endif %}
+
+  {% if text_body %}
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">文本正文</p>
+          <h2>纯文本内容</h2>
+        </div>
+      </div>
       <pre>{{ text_body }}</pre>
-    {% endif %}
-    {% if html_body %}
-      <section>
-        <h2>HTML preview</h2>
+    </section>
+  {% endif %}
+
+  {% if html_body %}
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">网页正文</p>
+          <h2>网页正文预览</h2>
+        </div>
+      </div>
+      <div class="iframe-shell">
         <iframe
           src="/mail/{{ mailbox }}/{{ delivery_id }}/html"
-          title="HTML preview"
+          title="网页正文预览"
           sandbox
           referrerpolicy="no-referrer"
         ></iframe>
-      </section>
-    {% endif %}
-    {% if attachments %}
-      <section>
-        <h2>Attachments</h2>
-        <ul>
-          {% for attachment in attachments %}
-            <li>
-              <a href="/mail/{{ mailbox }}/{{ delivery_id }}/attachments/{{ attachment.id }}">
-                {{ attachment.filename or attachment.safe_filename }}
-              </a>
-            </li>
-          {% endfor %}
-        </ul>
-      </section>
-    {% endif %}
-  </body>
-</html>
+      </div>
+    </section>
+  {% endif %}
+
+  {% if attachments %}
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">附件</p>
+          <h2>可下载文件</h2>
+        </div>
+      </div>
+      <div class="attachment-list">
+        {% for attachment in attachments %}
+          <a class="mail-item" href="/mail/{{ mailbox }}/{{ delivery_id }}/attachments/{{ attachment.id }}">
+            <div class="attachment-item">
+              <strong>{{ attachment.filename or attachment.safe_filename }}</strong>
+              <span class="badge">{{ attachment.size_bytes }} B</span>
+            </div>
+            <div class="mail-meta">
+              <span class="muted">{{ attachment.content_type or "未知类型" }}</span>
+              <span class="muted">{{ "内联资源" if attachment.is_inline else "普通附件" }}</span>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+
+  {% if headers %}
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">邮件头</p>
+          <h2>原始邮件头</h2>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>字段</th>
+              <th>值</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for name, value in headers %}
+              <tr>
+                <td><strong>{{ name }}</strong></td>
+                <td>{{ value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

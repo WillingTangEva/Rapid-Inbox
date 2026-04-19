@@ -4,49 +4,49 @@
   <section class="card">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Domain</p>
+        <p class="eyebrow">域名详情</p>
         <h2>{{ domain.root_domain_ascii }}</h2>
       </div>
-      <a class="button button--ghost" href="/admin/domains">Back to domains</a>
+      <a class="button button--ghost" href="/admin/domains">返回域名列表</a>
     </div>
 
     <dl class="kvs">
-      <dt>Unicode</dt>
+      <dt>国际化域名</dt>
       <dd>{{ domain.root_domain_unicode or domain.root_domain_ascii }}</dd>
-      <dt>Status</dt>
+      <dt>状态</dt>
       <dd>
         <span class="pill {% if domain.is_active %}pill--success{% else %}pill--neutral{% endif %}">
-          {% if domain.is_active %}Active{% else %}Inactive{% endif %}
+          {{ "已启用" if domain.is_active else "未启用" }}
         </span>
       </dd>
-      <dt>Web access</dt>
-      <dd>{{ "Enabled" if domain.public_web_enabled else "Disabled" }}</dd>
-      <dt>API access</dt>
-      <dd>{{ "Enabled" if domain.public_api_enabled else "Disabled" }}</dd>
-      <dt>Exact matches</dt>
-      <dd>{{ "Yes" if domain.accept_exact else "No" }}</dd>
-      <dt>Subdomains</dt>
-      <dd>{{ "Yes" if domain.accept_subdomains else "No" }}</dd>
-      <dt>Plus addressing</dt>
-      <dd>{{ domain.plus_addressing_mode }}</dd>
-      <dt>Case sensitive</dt>
-      <dd>{{ "Yes" if domain.local_part_case_sensitive else "No" }}</dd>
-      <dt>Max message size</dt>
-      <dd>{{ domain.max_message_size_bytes }}</dd>
-      <dt>Retention days</dt>
-      <dd>{{ domain.retention_days if domain.retention_days is not none else "Unlimited" }}</dd>
-      <dt>DNS status</dt>
-      <dd>{{ domain.dns_status }}</dd>
-      <dt>Notes</dt>
-      <dd>{{ domain.notes or "None" }}</dd>
+      <dt>公开网页访问</dt>
+      <dd>{{ cn_bool(domain.public_web_enabled, yes="已开启", no="已关闭") }}</dd>
+      <dt>公开接口访问</dt>
+      <dd>{{ cn_bool(domain.public_api_enabled, yes="已开启", no="已关闭") }}</dd>
+      <dt>接收根域邮箱</dt>
+      <dd>{{ cn_bool(domain.accept_exact) }}</dd>
+      <dt>接收子域邮箱</dt>
+      <dd>{{ cn_bool(domain.accept_subdomains) }}</dd>
+      <dt>加号寻址策略</dt>
+      <dd>{{ cn_plus_addressing_mode(domain.plus_addressing_mode) }}</dd>
+      <dt>区分大小写</dt>
+      <dd>{{ cn_bool(domain.local_part_case_sensitive) }}</dd>
+      <dt>最大邮件大小</dt>
+      <dd>{{ domain.max_message_size_bytes }} B</dd>
+      <dt>保留天数</dt>
+      <dd>{{ domain.retention_days if domain.retention_days is not none else "无限制" }}</dd>
+      <dt>DNS 状态</dt>
+      <dd>{{ cn_dns_status(domain.dns_status) }}</dd>
+      <dt>备注</dt>
+      <dd>{{ domain.notes or "无" }}</dd>
     </dl>
   </section>
 
   <section class="card">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Mailboxes</p>
-        <h2>Domain mailboxes</h2>
+        <p class="eyebrow">邮箱</p>
+        <h2>该域名下的邮箱</h2>
       </div>
     </div>
     {% if mailboxes %}
@@ -54,12 +54,12 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Mailbox</th>
-              <th>Messages</th>
-              <th>Latest message</th>
-              <th>Public</th>
-              <th>Hidden</th>
-              <th>Notes</th>
+              <th>邮箱地址</th>
+              <th>邮件数</th>
+              <th>最近一封</th>
+              <th>公开访问</th>
+              <th>隐藏</th>
+              <th>备注</th>
             </tr>
           </thead>
           <tbody>
@@ -67,17 +67,17 @@
               <tr>
                 <td>{{ mailbox.address_canonical }}</td>
                 <td>{{ mailbox.message_count }}</td>
-                <td>{{ mailbox.latest_message_at or "None" }}</td>
-                <td>{{ "Yes" if mailbox.public_enabled else "No" }}</td>
-                <td>{{ "Yes" if mailbox.is_hidden else "No" }}</td>
-                <td>{{ mailbox.notes or "None" }}</td>
+                <td>{{ mailbox.latest_message_at or "无" }}</td>
+                <td>{{ cn_bool(mailbox.public_enabled, yes="已公开", no="已关闭") }}</td>
+                <td>{{ cn_bool(mailbox.is_hidden, yes="是", no="否") }}</td>
+                <td>{{ mailbox.notes or "无" }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     {% else %}
-      <p class="muted">No mailboxes recorded for this domain yet.</p>
+      <div class="empty-state">这个域名下还没有记录到邮箱。</div>
     {% endif %}
   </section>
 {% endblock %}

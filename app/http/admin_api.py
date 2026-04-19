@@ -186,7 +186,7 @@ async def live_page(request: Request) -> Response:
         request,
         "admin/live.html",
         {
-            "page_title": "Live",
+            "page_title": "实时活动",
             "admin": admin,
             "events": initial_events,
             "sessions": recent_smtp_sessions(runtime),

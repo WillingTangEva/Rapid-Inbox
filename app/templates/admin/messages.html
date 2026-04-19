@@ -4,8 +4,9 @@
   <section class="card">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Messages</p>
-        <h2>Recent messages</h2>
+        <p class="eyebrow">邮件</p>
+        <h2>最近接收的邮件</h2>
+        <p class="section-copy">这里可以快速检查主题、发件人、解析状态、投递数量和附件数量。</p>
       </div>
     </div>
     {% if messages %}
@@ -13,36 +14,36 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Received</th>
-              <th>Subject</th>
-              <th>From</th>
-              <th>Status</th>
-              <th>Attachments</th>
-              <th>Deliveries</th>
-              <th>Parse error</th>
+              <th>接收时间</th>
+              <th>主题</th>
+              <th>发件人</th>
+              <th>状态</th>
+              <th>附件数</th>
+              <th>投递数</th>
+              <th>解析错误</th>
             </tr>
           </thead>
           <tbody>
             {% for message in messages %}
               <tr>
                 <td>{{ message.received_at }}</td>
-                <td>{{ message.subject or "(no subject)" }}</td>
-                <td>{{ message.from_addr or "unknown" }}</td>
+                <td>{{ message.subject or "（无主题）" }}</td>
+                <td>{{ message.from_addr or "未知发件人" }}</td>
                 <td>
                   <span class="pill {% if message.parse_status == 'parsed' %}pill--success{% elif message.parse_status == 'failed' %}pill--danger{% else %}pill--warning{% endif %}">
-                    {{ message.parse_status }}
+                    {{ cn_parse_status(message.parse_status) }}
                   </span>
                 </td>
                 <td>{{ message.attachment_count if message.has_attachments else 0 }}</td>
                 <td>{{ message.delivery_count }}</td>
-                <td>{{ message.parse_error or "None" }}</td>
+                <td>{{ message.parse_error or "无" }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     {% else %}
-      <p class="muted">No messages yet.</p>
+      <div class="empty-state">还没有邮件。</div>
     {% endif %}
   </section>
 {% endblock %}

@@ -1,18 +1,18 @@
 {% extends "admin/base.html" %}
 
 {% block content %}
-  <section class="card">
+  <section class="card card--accent">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Overview</p>
-        <h2>Operations at a glance</h2>
+        <p class="eyebrow">总览</p>
+        <h2>今天的系统状态一目了然</h2>
+        <p class="section-copy">你当前以 {{ admin.display_name or admin.username }} 身份登录，可以从这里快速切到域名、邮件和实时活动页。</p>
       </div>
       <div class="button-row">
-        <a class="button" href="/admin/domains">Manage domains</a>
-        <a class="button button--ghost" href="/admin/messages">Review messages</a>
+        <a class="button" href="/admin/domains">管理域名</a>
+        <a class="button button--ghost" href="/admin/messages">查看邮件</a>
       </div>
     </div>
-    <p class="muted">Signed in as {{ admin.display_name or admin.username }}.</p>
   </section>
 
   <section class="grid stats">
@@ -29,8 +29,8 @@
     <article class="card">
       <div class="section-title">
         <div>
-          <p class="eyebrow">Domains</p>
-          <h2>Recent domains</h2>
+          <p class="eyebrow">域名</p>
+          <h2>最近接入的域名</h2>
         </div>
       </div>
       {% if recent_domains %}
@@ -42,21 +42,21 @@
                 <span class="muted">{{ domain.created_at }}</span>
               </div>
               <span class="pill {% if domain.is_active %}pill--success{% else %}pill--neutral{% endif %}">
-                {% if domain.is_active %}Active{% else %}Inactive{% endif %}
+                {{ "已启用" if domain.is_active else "未启用" }}
               </span>
             </li>
           {% endfor %}
         </ul>
       {% else %}
-        <p class="muted">No domains yet.</p>
+        <div class="empty-state">还没有接入任何域名。</div>
       {% endif %}
     </article>
 
     <article class="card">
       <div class="section-title">
         <div>
-          <p class="eyebrow">Messages</p>
-          <h2>Recent messages</h2>
+          <p class="eyebrow">邮件</p>
+          <h2>最新接收的邮件</h2>
         </div>
       </div>
       {% if recent_messages %}
@@ -64,18 +64,18 @@
           {% for message in recent_messages %}
             <li class="stack-row">
               <div class="stack-meta">
-                <strong>{{ message.subject or "(no subject)" }}</strong>
-                <span class="muted">{{ message.from_addr or "unknown sender" }}</span>
+                <strong>{{ message.subject or "（无主题）" }}</strong>
+                <span class="muted">{{ message.from_addr or "未知发件人" }}</span>
                 <span class="muted">{{ message.received_at }}</span>
               </div>
               <span class="pill {% if message.parse_status == 'parsed' %}pill--success{% elif message.parse_status == 'failed' %}pill--danger{% else %}pill--warning{% endif %}">
-                {{ message.parse_status }}
+                {{ cn_parse_status(message.parse_status) }}
               </span>
             </li>
           {% endfor %}
         </ul>
       {% else %}
-        <p class="muted">No messages yet.</p>
+        <div class="empty-state">系统还没有收到邮件。</div>
       {% endif %}
     </article>
   </section>

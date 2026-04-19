@@ -4,8 +4,9 @@
   <section class="card">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Audit</p>
-        <h2>Recent audit events</h2>
+        <p class="eyebrow">审计</p>
+        <h2>最近的审计事件</h2>
+        <p class="section-copy">所有关键管理动作都会在这里留下记录，便于追踪变更与排查问题。</p>
       </div>
     </div>
     {% if logs %}
@@ -13,34 +14,34 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Resource</th>
-              <th>Status</th>
-              <th>Details</th>
+              <th>时间</th>
+              <th>执行者</th>
+              <th>动作</th>
+              <th>资源</th>
+              <th>结果</th>
+              <th>详情</th>
             </tr>
           </thead>
           <tbody>
             {% for log in logs %}
               <tr>
                 <td>{{ log.created_at }}</td>
-                <td>{{ log.actor_type }}: {{ log.actor_ref or "system" }}</td>
-                <td>{{ log.action }}</td>
-                <td>{{ log.resource_type }}{% if log.resource_ref %}: {{ log.resource_ref }}{% endif %}</td>
+                <td>{{ cn_actor_type(log.actor_type) }}：{{ log.actor_ref or "系统" }}</td>
+                <td>{{ cn_action(log.action) }}</td>
+                <td>{{ cn_resource_type(log.resource_type) }}{% if log.resource_ref %}：{{ log.resource_ref }}{% endif %}</td>
                 <td>
                   <span class="pill {% if log.status == 'success' %}pill--success{% else %}pill--danger{% endif %}">
-                    {{ log.status }}
+                    {{ cn_audit_status(log.status) }}
                   </span>
                 </td>
-                <td>{{ log.details or "None" }}</td>
+                <td>{{ log.details or "无" }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     {% else %}
-      <p class="muted">No audit events yet.</p>
+      <div class="empty-state">还没有审计记录。</div>
     {% endif %}
   </section>
 {% endblock %}

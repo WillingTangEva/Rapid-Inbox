@@ -8,48 +8,49 @@
     <section class="card">
       <div class="section-title">
         <div>
-          <p class="eyebrow">Created</p>
+          <p class="eyebrow">已创建</p>
           <h2>{{ created_api_key.name }}</h2>
         </div>
       </div>
-      <p class="muted">Copy this secret now. It is only shown once.</p>
+      <p class="muted">请立即保存这串密钥明文。页面只会展示一次。</p>
       <pre>{{ created_api_key.plain_text }}</pre>
     </section>
   {% endif %}
   <section class="card">
     <div class="section-title">
       <div>
-        <p class="eyebrow">API Keys</p>
-        <h2>Administrative keys</h2>
+        <p class="eyebrow">API 密钥</p>
+        <h2>管理与服务访问密钥</h2>
+        <p class="section-copy">可以在这里创建新密钥、分配作用域，并按需绑定域名或邮箱范围。</p>
       </div>
     </div>
-    <form method="post" action="/admin/api-keys" style="display:grid; gap:0.75rem; max-width:42rem; margin-bottom:1rem;">
+    <form method="post" action="/admin/api-keys" class="form-grid two-up" style="margin-bottom:1rem;">
       <label>
-        <div class="muted">Name</div>
-        <input type="text" name="name" value="New API key" />
+        <div class="muted">名称</div>
+        <input type="text" name="name" value="新的 API 密钥" />
       </label>
       <label>
-        <div class="muted">Kind</div>
+        <div class="muted">类型</div>
         <select name="kind">
-          <option value="admin" selected>admin</option>
-          <option value="service">service</option>
-          <option value="public">public</option>
+          <option value="admin" selected>管理员</option>
+          <option value="service">服务</option>
+          <option value="public">公开访问</option>
         </select>
       </label>
       <label>
-        <div class="muted">Scopes</div>
+        <div class="muted">作用域</div>
         <input type="text" name="scopes" value="system.read, system.write" />
       </label>
       <label>
-        <div class="muted">Domain IDs</div>
-        <input type="text" name="domain_ids" placeholder="Comma-separated domain IDs" />
+        <div class="muted">域名 ID</div>
+        <input type="text" name="domain_ids" placeholder="多个域名 ID 请用逗号分隔" />
       </label>
       <label>
-        <div class="muted">Mailbox patterns</div>
-        <input type="text" name="mailbox_patterns" placeholder="Comma-separated mailbox patterns" />
+        <div class="muted">邮箱匹配规则</div>
+        <input type="text" name="mailbox_patterns" placeholder="多个邮箱规则请用逗号分隔" />
       </label>
       <div class="button-row">
-        <button class="button" type="submit">Create key</button>
+        <button class="button" type="submit">创建密钥</button>
       </div>
     </form>
     {% if api_keys %}
@@ -57,14 +58,14 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Kind</th>
-              <th>Status</th>
-              <th>Scopes</th>
-              <th>Domain grants</th>
-              <th>Mailbox grants</th>
-              <th>Last used</th>
-              <th>Actions</th>
+              <th>名称</th>
+              <th>类型</th>
+              <th>状态</th>
+              <th>作用域</th>
+              <th>域名授权</th>
+              <th>邮箱授权</th>
+              <th>最近使用</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -76,23 +77,23 @@
                     <span class="muted">{{ api_key.public_id }}</span>
                   </div>
                 </td>
-                <td>{{ api_key.kind }}</td>
+                <td>{{ cn_api_key_kind(api_key.kind) }}</td>
                 <td>
                   <span class="pill {% if api_key.status == 'active' %}pill--success{% elif api_key.status == 'revoked' %}pill--danger{% else %}pill--neutral{% endif %}">
-                    {{ api_key.status }}
+                    {{ cn_api_key_status(api_key.status) }}
                   </span>
                 </td>
-                <td>{{ api_key.scopes or "None" }}</td>
+                <td>{{ api_key.scopes or "无" }}</td>
                 <td>{{ api_key.domain_count }}</td>
                 <td>{{ api_key.mailbox_count }}</td>
-                <td>{{ api_key.last_used_at or "Never" }}</td>
+                <td>{{ api_key.last_used_at or "从未使用" }}</td>
                 <td>
                   {% if api_key.status == 'active' %}
                     <form method="post" action="/admin/api-keys/{{ api_key.id }}/revoke">
-                      <button class="button button--ghost" type="submit">Revoke</button>
+                      <button class="button button--ghost" type="submit">吊销</button>
                     </form>
                   {% else %}
-                    <span class="muted">No actions</span>
+                    <span class="muted">无需操作</span>
                   {% endif %}
                 </td>
               </tr>
@@ -101,7 +102,7 @@
         </table>
       </div>
     {% else %}
-      <p class="muted">No API keys yet.</p>
+      <div class="empty-state">还没有 API 密钥。</div>
     {% endif %}
   </section>
 {% endblock %}

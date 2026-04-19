@@ -55,6 +55,18 @@ def _parse_int_values(value: str | None) -> list[int]:
     return [int(item) for item in _parse_csv_values(value)]
 
 
+def _parse_positive_int(value: str | None, *, default: int, field_name: str) -> int:
+    if value is None or not value.strip():
+        return default
+    try:
+        normalized = int(value)
+    except ValueError as exc:
+        raise ValueError(f"invalid {field_name}") from exc
+    if normalized < 1:
+        raise ValueError(f"invalid {field_name}")
+    return normalized
+
+
 def _count(connection, query: str, params: tuple[Any, ...] = ()) -> int:
     row = connection.execute(query, params).fetchone()
     if row is None:
@@ -130,44 +142,44 @@ def _dashboard_stats(request: Request) -> dict[str, Any]:
     return {
         "stats": [
             {
-                "label": "Active SMTP sessions",
+                "label": "当前 SMTP 会话",
                 "value": stats["open_sessions"],
-                "hint": "Sessions currently open on the SMTP listener.",
+                "hint": "仍在监听器上保持连接的 SMTP 会话数。",
             },
             {
-                "label": "Domains",
+                "label": "已接入域名",
                 "value": stats["domains"],
-                "hint": "Managed root domains.",
+                "hint": "正在托管并接收邮件的根域名数量。",
             },
             {
-                "label": "Mailboxes",
+                "label": "已收录邮箱",
                 "value": stats["mailboxes"],
-                "hint": "Normalized recipient addresses.",
+                "hint": "系统中已建立索引的公开邮箱数量。",
             },
             {
-                "label": "Messages",
+                "label": "邮件总数",
                 "value": stats["messages"],
-                "hint": "Raw messages stored in SQLite.",
+                "hint": "已被系统接收并建立索引的邮件数量。",
             },
             {
-                "label": "Pending parses",
+                "label": "待解析邮件",
                 "value": stats["pending_messages"],
-                "hint": "Messages waiting for MIME parsing.",
+                "hint": "已经入库、仍在等待 MIME 解析的邮件。",
             },
             {
-                "label": "Failed parses",
+                "label": "解析失败",
                 "value": stats["failed_messages"],
-                "hint": "Messages that need attention.",
+                "hint": "解析出错、需要人工关注的邮件。",
             },
             {
-                "label": "API keys",
+                "label": "API 密钥",
                 "value": stats["api_keys"],
-                "hint": "Admin, service, and public keys.",
+                "hint": "用于管理端、服务端与公开访问的密钥总数。",
             },
             {
-                "label": "Audit logs",
+                "label": "审计日志",
                 "value": stats["audit_logs"],
-                "hint": "Recorded administrative actions.",
+                "hint": "已经记录的管理操作与系统行为。",
             },
         ],
         "recent_domains": recent_domains,
@@ -245,6 +257,69 @@ def _list_api_keys(request: Request, *, limit: int = 100) -> list[dict[str, Any]
     return [dict(row) for row in rows]
 
 
+def _domain_form_values(request: Request, form: dict[str, str] | None = None) -> dict[str, Any]:
+    settings = request.app.state.runtime.get_settings()
+    payload = form or {}
+    return {
+        "root_domain": payload.get("root_domain", ""),
+        "accept_exact": _form_bool(payload["accept_exact"]) if "accept_exact" in payload else True,
+        "accept_subdomains": _form_bool(payload["accept_subdomains"]) if "accept_subdomains" in payload else True,
+        "public_web_enabled": _form_bool(payload["public_web_enabled"]) if "public_web_enabled" in payload else True,
+        "public_api_enabled": _form_bool(payload["public_api_enabled"]) if "public_api_enabled" in payload else True,
+        "local_part_case_sensitive": (
+            _form_bool(payload["local_part_case_sensitive"]) if "local_part_case_sensitive" in payload else False
+        ),
+        "is_active": _form_bool(payload["is_active"]) if "is_active" in payload else True,
+        "plus_addressing_mode": payload.get("plus_addressing_mode", "keep") or "keep",
+        "max_message_size_bytes": payload.get(
+            "max_message_size_bytes",
+            str(settings["max_message_size_bytes"]),
+        )
+        or str(settings["max_message_size_bytes"]),
+    }
+
+
+def _domain_form_error_message(exc: Exception) -> str:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return "该域名已经存在，不能重复添加。"
+
+    message = str(exc)
+    error_map = {
+        "invalid root_domain": "请输入有效的根域名，例如 `adb.com`。",
+        "invalid accept_exact": "根域接收选项无效。",
+        "invalid accept_subdomains": "子域接收选项无效。",
+        "invalid public_web_enabled": "公开网页访问选项无效。",
+        "invalid public_api_enabled": "公开接口访问选项无效。",
+        "invalid plus_addressing_mode": "加号寻址策略无效。",
+        "invalid local_part_case_sensitive": "大小写选项无效。",
+        "invalid is_active": "启用状态选项无效。",
+        "invalid max_message_size_bytes": "最大邮件大小必须是大于 0 的整数。",
+    }
+    return error_map.get(message, message or "提交的域名信息无效。")
+
+
+def _render_domains_page(
+    request: Request,
+    admin: dict[str, Any],
+    *,
+    status_code: int = 200,
+    create_error: str | None = None,
+    create_form: dict[str, Any] | None = None,
+) -> Response:
+    return _render(
+        request,
+        "admin/domains.html",
+        {
+            "page_title": "域名",
+            "admin": admin,
+            "domains": request.app.state.runtime.list_domains(),
+            "create_error": create_error,
+            "create_form": create_form or _domain_form_values(request),
+        },
+        status_code=status_code,
+    )
+
+
 def _domain_mailboxes(request: Request, domain_id: int, *, limit: int = 100) -> list[dict[str, Any]]:
     with connect_database(request.app.state.runtime.settings.database_path) as connection:
         rows = connection.execute(
@@ -276,7 +351,7 @@ async def login_page(request: Request) -> Response:
         request,
         "admin/login.html",
         {
-            "page_title": "Admin Login",
+            "page_title": "管理员登录",
             "error": None,
             "username": "",
         },
@@ -293,8 +368,8 @@ async def login(request: Request) -> Response:
             request,
             "admin/login.html",
             {
-                "page_title": "Admin Login",
-                "error": "Username and password are required.",
+                "page_title": "管理员登录",
+                "error": "用户名和密码不能为空。",
                 "username": username,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -307,8 +382,8 @@ async def login(request: Request) -> Response:
             request,
             "admin/login.html",
             {
-                "page_title": "Admin Login",
-                "error": "Invalid username or password.",
+                "page_title": "管理员登录",
+                "error": "用户名或密码不正确。",
                 "username": username,
             },
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -357,7 +432,7 @@ async def dashboard_page(request: Request) -> Response:
         request,
         "admin/dashboard.html",
         {
-            "page_title": "Dashboard",
+            "page_title": "仪表盘",
             "admin": admin_or_response,
             **summary,
         },
@@ -370,15 +445,43 @@ async def domains_page(request: Request) -> Response:
     if isinstance(admin_or_response, Response):
         return admin_or_response
 
-    return _render(
-        request,
-        "admin/domains.html",
-        {
-            "page_title": "Domains",
-            "admin": admin_or_response,
-            "domains": request.app.state.runtime.list_domains(),
-        },
-    )
+    return _render_domains_page(request, admin_or_response)
+
+
+@router.post("/admin/domains")
+async def create_domain_from_form(request: Request) -> Response:
+    admin_or_response = await _require_admin(request)
+    if isinstance(admin_or_response, Response):
+        return admin_or_response
+
+    form = _parse_form_body(await request.body())
+    form_values = _domain_form_values(request, form)
+    try:
+        created = await request.app.state.runtime.create_domain(
+            form.get("root_domain", "").strip(),
+            accept_exact=_form_bool(form.get("accept_exact")),
+            accept_subdomains=_form_bool(form.get("accept_subdomains")),
+            public_web_enabled=_form_bool(form.get("public_web_enabled")),
+            public_api_enabled=_form_bool(form.get("public_api_enabled")),
+            plus_addressing_mode=form.get("plus_addressing_mode", "keep").strip() or "keep",
+            local_part_case_sensitive=_form_bool(form.get("local_part_case_sensitive")),
+            is_active=_form_bool(form.get("is_active")),
+            max_message_size_bytes=_parse_positive_int(
+                form.get("max_message_size_bytes"),
+                default=int(request.app.state.runtime.get_settings()["max_message_size_bytes"]),
+                field_name="max_message_size_bytes",
+            ),
+        )
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        return _render_domains_page(
+            request,
+            admin_or_response,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            create_error=_domain_form_error_message(exc),
+            create_form=form_values,
+        )
+
+    return RedirectResponse(f"/admin/domains/{created['id']}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/admin/domains/{domain_id}", response_class=HTMLResponse)
@@ -414,7 +517,7 @@ async def mailboxes_page(request: Request) -> Response:
         request,
         "admin/mailboxes.html",
         {
-            "page_title": "Mailboxes",
+            "page_title": "邮箱",
             "admin": admin_or_response,
             "mailboxes": request.app.state.runtime.mailboxes.list_mailboxes()["items"],
         },
@@ -454,7 +557,7 @@ async def messages_page(request: Request) -> Response:
         request,
         "admin/messages.html",
         {
-            "page_title": "Messages",
+            "page_title": "邮件",
             "admin": admin_or_response,
             "messages": _list_recent_messages(request),
         },
@@ -471,7 +574,7 @@ async def api_keys_page(request: Request) -> Response:
         request,
         "admin/api_keys.html",
         {
-            "page_title": "API Keys",
+            "page_title": "API 密钥",
             "admin": admin_or_response,
             "api_keys": _list_api_keys(request),
             "created_api_key": None,
@@ -498,14 +601,14 @@ async def create_api_key(request: Request) -> Response:
             request,
             "admin/api_keys.html",
             {
-                "page_title": "API Keys",
+                "page_title": "API 密钥",
                 "admin": admin_or_response,
                 "api_keys": _list_api_keys(request),
                 "created_api_key": None,
-                "error": "Name is required.",
-        },
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-    )
+                "error": "名称不能为空。",
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
 
     try:
         created = await request.app.state.runtime.api_keys.create_key(
@@ -520,7 +623,7 @@ async def create_api_key(request: Request) -> Response:
             request,
             "admin/api_keys.html",
             {
-                "page_title": "API Keys",
+                "page_title": "API 密钥",
                 "admin": admin_or_response,
                 "api_keys": _list_api_keys(request),
                 "created_api_key": None,
@@ -533,7 +636,7 @@ async def create_api_key(request: Request) -> Response:
         request,
         "admin/api_keys.html",
         {
-            "page_title": "API Keys",
+            "page_title": "API 密钥",
             "admin": admin_or_response,
             "api_keys": _list_api_keys(request),
             "created_api_key": created,
@@ -567,7 +670,7 @@ async def audit_page(request: Request) -> Response:
         request,
         "admin/audit.html",
         {
-            "page_title": "Audit",
+            "page_title": "审计日志",
             "admin": admin_or_response,
             "logs": request.app.state.runtime.audit.list_logs(limit=100)["items"],
         },
@@ -584,24 +687,24 @@ async def settings_page(request: Request) -> Response:
     app_settings = request.app.state.settings
     settings_items = [
         {
-            "label": "max_message_size_bytes",
+            "label": "最大邮件大小",
             "value": runtime_settings["max_message_size_bytes"],
-            "hint": "Maximum accepted message size.",
+            "hint": "系统允许接收的单封邮件大小上限（字节）。",
         },
         {
-            "label": "max_recipients_per_message",
+            "label": "单封邮件最大收件人数",
             "value": runtime_settings["max_recipients_per_message"],
-            "hint": "Maximum RCPT TO count per SMTP transaction.",
+            "hint": "单次 SMTP 事务允许的 RCPT TO 数量上限。",
         },
         {
-            "label": "session_cookie_name",
+            "label": "会话 Cookie 名称",
             "value": app_settings.session_cookie_name,
-            "hint": "Cookie name used for admin HTML sessions.",
+            "hint": "管理后台 HTML 会话使用的 Cookie 名称。",
         },
         {
-            "label": "bootstrap_admin_username",
+            "label": "初始管理员账号",
             "value": app_settings.bootstrap_admin_username,
-            "hint": "Initial admin account created at startup.",
+            "hint": "系统启动时自动创建的管理员用户名。",
         },
     ]
 
@@ -609,7 +712,7 @@ async def settings_page(request: Request) -> Response:
         request,
         "admin/settings.html",
         {
-            "page_title": "Settings",
+            "page_title": "系统设置",
             "admin": admin_or_response,
             "settings_items": settings_items,
         },
