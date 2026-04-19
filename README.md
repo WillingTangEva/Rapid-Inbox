@@ -20,7 +20,7 @@ The startup defaults live in `app/config.py` and are mirrored in `.env.example` 
 - Bootstrap admin password: `change-me-now`
 - Session cookie name: `rapid_inbox_session`
 - HTTP host and port: `127.0.0.1:8000`
-- SMTP host and port: `127.0.0.1:2525`
+- SMTP host and port: `127.0.0.1:25`
 - Max message size: `52428800`
 - Max recipients per message: `20`
 

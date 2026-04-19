@@ -77,7 +77,15 @@ async def admin_client(app_client: httpx.AsyncClient, runtime: RapidInboxRuntime
     key = await runtime.api_keys.create_key(
         name="fixture-admin",
         kind="admin",
-        scopes=["domains.write", "messages.write", "audit.read", "system.write", "live.read"],
+        scopes=[
+            "domains.write",
+            "messages.write",
+            "audit.read",
+            "system.write",
+            "live.read",
+            "mailboxes.write",
+            "api_keys.write",
+        ],
         domain_ids=[],
         mailbox_patterns=[],
     )

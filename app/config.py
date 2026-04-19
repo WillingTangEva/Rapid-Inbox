@@ -14,7 +14,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8000
     smtp_host: str = "127.0.0.1"
-    smtp_port: int = 2525
+    smtp_port: int = 25
     max_message_size_bytes: int = 52_428_800
     max_recipients_per_message: int = 20
     admin_token: str = "dev-admin-token"
