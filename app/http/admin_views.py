@@ -14,6 +14,59 @@ from app.http.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, build_paginati
 
 router = APIRouter()
 
+API_KEY_SCOPE_OPTIONS = (
+    {
+        "value": "public.read",
+        "label": "公开邮件读取",
+        "description": "允许读取公开邮箱的列表、详情、原文与附件。",
+    },
+    {
+        "value": "live.read",
+        "label": "实时会话查看",
+        "description": "允许查看后台实时 SMTP 会话面板。",
+    },
+    {
+        "value": "domains.read",
+        "label": "域名只读",
+        "description": "允许查看域名列表、详情与 DNS 检查结果。",
+    },
+    {
+        "value": "domains.write",
+        "label": "域名管理",
+        "description": "允许新增域名并修改域名相关配置。",
+    },
+    {
+        "value": "mailboxes.write",
+        "label": "邮箱管理",
+        "description": "允许修改邮箱的公开状态和隐藏状态。",
+    },
+    {
+        "value": "messages.write",
+        "label": "邮件重解析",
+        "description": "允许触发邮件重新解析与修复处理。",
+    },
+    {
+        "value": "audit.read",
+        "label": "审计日志读取",
+        "description": "允许查看后台审计日志记录。",
+    },
+    {
+        "value": "system.read",
+        "label": "系统设置只读",
+        "description": "允许查看当前系统运行配置。",
+    },
+    {
+        "value": "system.write",
+        "label": "系统设置修改",
+        "description": "允许修改系统级运行参数。",
+    },
+    {
+        "value": "api_keys.write",
+        "label": "API 密钥管理",
+        "description": "允许创建和吊销 API 密钥。",
+    },
+)
+
 
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client is not None else None
@@ -40,6 +93,13 @@ def _parse_form_body(body: bytes) -> dict[str, str]:
     return {key: values[-1] for key, values in parsed.items() if values}
 
 
+def _parse_form_body_lists(body: bytes) -> dict[str, list[str]]:
+    if not body:
+        return {}
+    parsed = parse_qs(body.decode("utf-8", errors="ignore"), keep_blank_values=True)
+    return {key: values for key, values in parsed.items() if values}
+
+
 def _form_bool(value: str | None) -> bool:
     if value is None:
         return False
@@ -54,6 +114,24 @@ def _parse_csv_values(value: str | None) -> list[str]:
 
 def _parse_int_values(value: str | None) -> list[int]:
     return [int(item) for item in _parse_csv_values(value)]
+
+
+def _parse_multi_text_values(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = value.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def _parse_multi_int_values(values: list[str] | None) -> list[int]:
+    return [int(item) for item in _parse_multi_text_values(values)]
 
 
 def _parse_positive_int(value: str | None, *, default: int, field_name: str) -> int:
@@ -233,6 +311,18 @@ def _list_messages_page(request: Request, *, limit: int, offset: int) -> list[di
                 m.id,
                 m.subject,
                 m.from_addr,
+                COALESCE(
+                    (
+                        SELECT GROUP_CONCAT(rcpt_to, ', ')
+                        FROM (
+                            SELECT DISTINCT rcpt_to
+                            FROM message_deliveries
+                            WHERE message_id = m.id
+                            ORDER BY rcpt_to ASC
+                        )
+                    ),
+                    ''
+                ) AS recipients,
                 m.received_at,
                 m.parse_status,
                 m.parse_error,
@@ -308,6 +398,7 @@ def _api_keys_page_context(
     offset: int = 0,
     created_api_key: dict[str, Any] | None = None,
     error: str | None = None,
+    create_form: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     api_keys = _list_api_keys(request, limit=limit, offset=offset)
     total_count = _count_table_rows(request, "api_keys")
@@ -315,7 +406,10 @@ def _api_keys_page_context(
         "page_title": "API 密钥",
         "admin": admin,
         "api_keys": api_keys,
+        "available_scopes": API_KEY_SCOPE_OPTIONS,
+        "available_domains": request.app.state.runtime.list_domains(),
         "created_api_key": created_api_key,
+        "create_form": create_form or _api_key_form_values(),
         "error": error,
         "pagination": build_pagination_context(
             path="/admin/api-keys",
@@ -324,6 +418,19 @@ def _api_keys_page_context(
             total_count=total_count,
             item_count=len(api_keys),
         ),
+    }
+
+
+def _api_key_form_values(form: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = form or {}
+    scopes = payload.get("scopes", [])
+    domain_ids = payload.get("domain_ids", [])
+    return {
+        "name": str(payload.get("name", "新的 API 密钥") or "新的 API 密钥"),
+        "kind": str(payload.get("kind", "admin") or "admin"),
+        "scopes": [str(item) for item in scopes],
+        "domain_ids": [str(item) for item in domain_ids],
+        "mailbox_patterns": str(payload.get("mailbox_patterns", "") or ""),
     }
 
 
@@ -692,18 +799,45 @@ async def create_api_key(request: Request) -> Response:
     if isinstance(admin_or_response, Response):
         return admin_or_response
 
-    form = _parse_form_body(await request.body())
-    name = form.get("name", "").strip()
-    kind = form.get("kind", "admin").strip() or "admin"
-    scopes = _parse_csv_values(form.get("scopes"))
-    domain_ids = _parse_int_values(form.get("domain_ids"))
-    mailbox_patterns = _parse_csv_values(form.get("mailbox_patterns"))
+    form = _parse_form_body_lists(await request.body())
+    name = (form.get("name") or [""])[-1].strip()
+    kind = ((form.get("kind") or ["admin"])[-1].strip() or "admin")
+    scopes = _parse_multi_text_values(form.get("scopes"))
+    mailbox_patterns = _parse_csv_values((form.get("mailbox_patterns") or [""])[-1])
+    try:
+        domain_ids = _parse_multi_int_values(form.get("domain_ids"))
+    except ValueError:
+        domain_ids = []
+        create_form = _api_key_form_values(
+            {
+                "name": name,
+                "kind": kind,
+                "scopes": scopes,
+                "domain_ids": [],
+                "mailbox_patterns": (form.get("mailbox_patterns") or [""])[-1],
+            }
+        )
+        return _render(
+            request,
+            "admin/api_keys.html",
+            _api_keys_page_context(request, admin_or_response, error="授权域名选择无效。", create_form=create_form),
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    create_form = _api_key_form_values(
+        {
+            "name": name,
+            "kind": kind,
+            "scopes": scopes,
+            "domain_ids": domain_ids,
+            "mailbox_patterns": (form.get("mailbox_patterns") or [""])[-1],
+        }
+    )
 
     if not name:
         return _render(
             request,
             "admin/api_keys.html",
-            _api_keys_page_context(request, admin_or_response, error="名称不能为空。"),
+            _api_keys_page_context(request, admin_or_response, error="名称不能为空。", create_form=create_form),
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
@@ -719,7 +853,7 @@ async def create_api_key(request: Request) -> Response:
         return _render(
             request,
             "admin/api_keys.html",
-            _api_keys_page_context(request, admin_or_response, error=str(exc)),
+            _api_keys_page_context(request, admin_or_response, error=str(exc), create_form=create_form),
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 

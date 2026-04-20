@@ -338,7 +338,7 @@
               </div>
               <div class="mail-time">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7; margin-right: 4px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                {{ item.delivered_at }}
+                {{ cn_datetime(item.delivered_at) }}
               </div>
             </div>
             
@@ -426,6 +426,32 @@
       .replaceAll("'", "&#39;");
   }
 
+  const shanghaiDateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+
+  function formatShanghaiDateTime(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    const parts = Object.fromEntries(
+      shanghaiDateTimeFormatter
+        .formatToParts(date)
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, part.value]),
+    );
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  }
+
   function parseStatusClass(status) {
     if (status === "parsed") return "status-parsed";
     if (status === "failed") return "status-failed";
@@ -486,7 +512,7 @@
             </div>
             <div class="mail-time">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7; margin-right: 4px; vertical-align: text-bottom;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-              ${escapeHtml(item.delivered_at)}
+              ${escapeHtml(formatShanghaiDateTime(item.delivered_at))}
             </div>
           </div>
           <div class="tag-row">

@@ -130,7 +130,7 @@
           <li class="stack-row list-item-hover" style="border: none; border-radius: 0; border-bottom: 1px solid var(--border); padding: 1rem 1.5rem;">
             <div class="stack-meta">
               <a href="/admin/domains/{{ domain.id }}" style="font-size: 1rem; font-weight: 600;">{{ domain.root_domain_ascii }}</a>
-              <span class="muted" style="font-size: 0.8rem;">{{ domain.created_at }}</span>
+              <span class="muted" style="font-size: 0.8rem;">{{ cn_datetime(domain.created_at) }}</span>
             </div>
             <span class="pill {% if domain.is_active %}pill--success{% else %}pill--neutral{% endif %}" style="font-size: 0.75rem; padding: 0.2rem 0.6rem;">
               {{ "已启用" if domain.is_active else "未启用" }}

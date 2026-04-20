@@ -186,7 +186,7 @@
               <tr>
                 <td style="font-weight: 600;">{{ mailbox.address_canonical }}</td>
                 <td>{{ mailbox.message_count }}</td>
-                <td class="muted">{{ mailbox.latest_message_at or "无记录" }}</td>
+                <td class="muted">{{ cn_datetime(mailbox.latest_message_at, default="无记录") }}</td>
                 <td>
                   <span class="pill {% if mailbox.public_enabled %}pill--success{% else %}pill--neutral{% endif %}">
                     {{ cn_bool(mailbox.public_enabled, yes="已公开", no="已关闭") }}

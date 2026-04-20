@@ -30,6 +30,14 @@
     font-size: 0.85rem;
     color: var(--muted);
   }
+
+  .recipient-text {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0.2rem;
+    line-height: 1.5;
+    word-break: break-word;
+  }
   
   .parse-error-text {
     color: #fca5a5;
@@ -101,6 +109,9 @@
                   {{ message.subject or "（无主题）" }}
                 </span>
                 <div class="sender-text">来自: {{ message.from_addr or "未知发件人" }}</div>
+                <div class="recipient-text" title="{{ message.recipients or '未知收件人' }}">
+                  收件人: {{ message.recipients or "未知收件人" }}
+                </div>
                 
                 {% if message.parse_error %}
                   <div class="parse-error-text" title="{{ message.parse_error }}">
@@ -136,7 +147,7 @@
                 </div>
               </td>
               <td class="muted" style="vertical-align: middle; font-size: 0.9rem; font-family: monospace;">
-                {{ message.received_at }}
+                {{ cn_datetime(message.received_at) }}
               </td>
             </tr>
           {% endfor %}

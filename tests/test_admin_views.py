@@ -189,7 +189,7 @@ async def test_admin_api_keys_page_can_create_and_revoke_via_form(app_client, ru
         data={
             "name": "html-admin-key",
             "kind": "admin",
-            "scopes": "domains.read",
+            "scopes": ["domains.read"],
         },
     )
     match = re.search(r"(ri_admin_[a-f0-9]+_[A-Za-z0-9_-]+)", created.text)
@@ -231,6 +231,56 @@ async def test_admin_api_keys_page_can_create_and_revoke_via_form(app_client, ru
     assert revoked.status_code == 200
     assert after["status"] == "revoked"
     assert denied.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_api_keys_page_uses_checkbox_scopes_and_domain_hints(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+
+    response = await app_client.get("/admin/api-keys")
+
+    assert response.status_code == 200
+    assert 'type="checkbox" name="scopes" value="public.read"' in response.text
+    assert 'type="text" name="scopes"' not in response.text
+    assert "选择授权域名" in response.text
+    assert "不勾选任何已接入域名时，此密钥默认没有域名访问权限。" in response.text
+    assert "公开邮件读取" in response.text
+    assert "adb.com" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_api_keys_form_without_domain_grants_has_no_public_mailbox_access(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+
+    created = await app_client.post(
+        "/admin/api-keys",
+        data={
+            "name": "html-public-no-domain",
+            "kind": "public",
+            "scopes": ["public.read"],
+        },
+    )
+    match = re.search(r"(ri_public_[a-f0-9]+_[A-Za-z0-9_-]+)", created.text)
+
+    assert created.status_code in {200, 201}
+    assert match is not None
+
+    response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": match.group(1)},
+    )
+
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -303,6 +353,50 @@ async def test_admin_messages_page_paginates_results(app_client, runtime, monkey
     assert "?limit=20&offset=20" in response.text
     assert "Message 20" in response.text
     assert "Message 00" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_messages_page_shows_recipients(app_client, runtime, sample_email_bytes: bytes) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com", "bar@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+    )
+    await runtime.drain_parser_queue()
+
+    await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+    response = await app_client.get("/admin/messages")
+
+    assert response.status_code == 200
+    assert "收件人:" in response.text
+    assert "bar@adb.com, foo@adb.com" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_messages_page_displays_shanghai_time(app_client, runtime, monkeypatch, sample_email_bytes: bytes) -> None:
+    await runtime.create_domain("adb.com")
+    monkeypatch.setattr(runtime_module, "utc_now", lambda: "2026-04-18T20:00:00Z")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+    )
+    await runtime.drain_parser_queue()
+
+    await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+    response = await app_client.get("/admin/messages")
+
+    assert response.status_code == 200
+    assert "2026-04-19 04:00:00" in response.text
 
 
 @pytest.mark.asyncio

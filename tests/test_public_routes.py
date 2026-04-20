@@ -106,6 +106,25 @@ async def test_mailbox_page_and_public_api_show_received_message(tmp_path, sampl
 
 
 @pytest.mark.asyncio
+async def test_public_message_page_displays_shanghai_time(app_client, runtime, monkeypatch, sample_email_bytes: bytes) -> None:
+    await runtime.create_domain("adb.com")
+    monkeypatch.setattr(runtime_module, "utc_now", lambda: "2026-04-18T20:00:00Z")
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+    )
+    await runtime.drain_parser_queue()
+    mailbox = await runtime.get_mailbox_view("foo@adb.com")
+    delivery_id = mailbox["items"][0]["delivery_id"]
+
+    response = await app_client.get(f"/mail/foo@adb.com/{delivery_id}")
+
+    assert response.status_code == 200
+    assert "2026-04-19 04:00:00" in response.text
+
+
+@pytest.mark.asyncio
 async def test_public_mailbox_page_exposes_pagination_links(app_client, runtime, monkeypatch) -> None:
     _patch_sequenced_utc_now(monkeypatch)
 

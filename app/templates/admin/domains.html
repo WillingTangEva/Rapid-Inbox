@@ -191,7 +191,7 @@
                 </td>
                 <td><span style="color: {% if domain.accept_exact %}var(--text){% else %}var(--muted){% endif %}">{{ cn_bool(domain.accept_exact) }}</span></td>
                 <td><span style="color: {% if domain.accept_subdomains %}var(--text){% else %}var(--muted){% endif %}">{{ cn_bool(domain.accept_subdomains) }}</span></td>
-                <td class="muted">{{ domain.updated_at }}</td>
+                <td class="muted">{{ cn_datetime(domain.updated_at) }}</td>
               </tr>
             {% endfor %}
           </tbody>

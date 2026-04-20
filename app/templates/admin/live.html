@@ -283,7 +283,7 @@
         {% for event in events %}
           <details class="log-entry" data-event-type="{{ event.type }}">
             <summary class="log-summary">
-              <span class="log-time">{{ event.ts | default("00:00:00") }}</span>
+              <span class="log-time">{{ cn_time(event.ts, default="00:00:00") }}</span>
               <span class="log-badge badge-{{ event.type }}">{{ event.type | upper }}</span>
               <span class="log-message">
                 {% if event.rcpt_to %}
@@ -359,7 +359,7 @@
                   {% endif %}
                 </td>
                 <td class="muted">{{ session.last_rcpt_to_sample or "N/A" }}</td>
-                <td class="muted" style="font-size: 0.85rem;">{{ session.connect_at }}</td>
+                <td class="muted" style="font-size: 0.85rem;">{{ cn_datetime(session.connect_at) }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -413,6 +413,23 @@
       return 'badge-default';
     };
 
+    const shanghaiTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+
+    const formatShanghaiTime = (value) => {
+      if (!value) return "00:00:00";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+      return shanghaiTimeFormatter.format(date);
+    };
+
     const appendEvent = (payload) => {
       const emptyState = feed.querySelector("[data-empty-state='live']");
       if (emptyState) {
@@ -429,10 +446,7 @@
 
       const ts = document.createElement("span");
       ts.className = "log-time";
-      // Extract time portion if it's an ISO string, otherwise fallback to standard payload.ts
-      let timeStr = payload.ts || new Date().toISOString();
-      if (timeStr.includes("T")) timeStr = timeStr.split("T")[1].substring(0, 12);
-      ts.textContent = timeStr;
+      ts.textContent = formatShanghaiTime(payload.ts || new Date().toISOString());
       summary.appendChild(ts);
 
       const badge = document.createElement("span");

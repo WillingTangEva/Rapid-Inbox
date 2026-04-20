@@ -76,7 +76,7 @@
               <td>
                 <div style="display: flex; flex-direction: column; gap: 0.25rem;">
                   <span style="font-weight: 600;">{{ mailbox.message_count }} 封邮件</span>
-                  <span class="muted" style="font-size: 0.8rem;">最近: {{ mailbox.latest_message_at or "无" }}</span>
+                  <span class="muted" style="font-size: 0.8rem;">最近: {{ cn_datetime(mailbox.latest_message_at, default="无") }}</span>
                 </div>
               </td>
               <td>
