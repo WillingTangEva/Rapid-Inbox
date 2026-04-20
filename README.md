@@ -1,51 +1,51 @@
 # Rapid Inbox
 
-Rapid Inbox is a local-first inbound mailbox service. It receives mail over SMTP, stores raw messages and metadata on disk, and exposes public and admin HTTP surfaces for browsing and operations.
+Rapid Inbox 是一个本地优先的收件服务。它通过 SMTP 接收邮件，将原始邮件和元数据存储到磁盘，并提供公开端与管理端 HTTP 页面用于浏览和操作。
 
-## Local Development
+## 本地开发
 
-1. `python3.12 -m venv .venv`
+1. `python3 -m venv .venv`
 2. `.venv/bin/pip install -c constraints-dev.txt -e .[dev]`
 3. `.venv/bin/rapid-inbox-http`
-4. Open `http://127.0.0.1:8000/admin/login`
+4. 打开 `http://127.0.0.1:8000/admin/login`
 
-The default HTTP launcher starts the FastAPI app and an embedded SMTP listener in one process, using the current working directory as the storage root. Running it from the repository root creates `./storage/` and `./storage/app.db`.
-If you need a standalone SMTP listener for a custom setup, you can still run `.venv/bin/rapid-inbox-smtp` in a separate terminal.
+默认的 HTTP 启动器会在同一个进程中启动 FastAPI 应用和内嵌 SMTP 监听器，并使用当前工作目录作为存储根目录。从仓库根目录运行时，会创建 `./storage/` 和 `./storage/app.db`。
+如果你需要为自定义部署单独运行 SMTP 监听器，也可以在另一个终端中执行 `.venv/bin/rapid-inbox-smtp`。
 
-## Defaults
+## 默认值
 
-The startup defaults live in `app/config.py`, and the launchers now automatically load `.env` from the current working directory before falling back to code defaults:
+启动默认配置定义在 `app/config.py` 中。当前启动器会优先从当前工作目录加载 `.env`，再回退到代码默认值：
 
-- Bootstrap admin username: `admin`
-- Bootstrap admin password: `change-me-now`
-- Session cookie name: `rapid_inbox_session`
-- HTTP host and port: `127.0.0.1:8000`
-- SMTP host and port: `127.0.0.1:25`
-- Max message size: `52428800`
-- Max recipients per message: `20`
+- 初始管理员用户名：`admin`
+- 初始管理员密码：`change-me-now`
+- Session Cookie 名称：`rapid_inbox_session`
+- HTTP 监听地址和端口：`127.0.0.1:8000`
+- SMTP 监听地址和端口：`127.0.0.1:25`
+- 单封邮件最大体积：`52428800`
+- 单封邮件最大收件人数：`20`
 
-The default launcher flow creates the bootstrap admin with username `admin` and password `change-me-now`, so the login step is immediately usable on a fresh local checkout.
+默认启动流程会自动创建初始管理员账号，用户名为 `admin`、密码为 `change-me-now`，因此在全新本地环境中可以直接登录。
 
-Configuration priority is:
+配置优先级如下：
 
-1. Real environment variables
-2. `.env` in the project root / current working directory
-3. Code defaults in `app/config.py`
+1. 真实环境变量
+2. 项目根目录或当前工作目录中的 `.env`
+3. `app/config.py` 中的代码默认值
 
-That means you can copy `.env.example` to `.env`, edit it, and the default `rapid-inbox-http` / `rapid-inbox-smtp` launchers will pick it up automatically.
+这意味着你可以把 `.env.example` 复制为 `.env` 并按需修改，默认的 `rapid-inbox-http` / `rapid-inbox-smtp` 启动器会自动读取它。
 
-## Dependency Pins
+## 依赖锁定
 
-The direct dependencies in `pyproject.toml` are pinned to exact versions, and `constraints-dev.txt` contains the full tested dependency set used by the development environment.
+`pyproject.toml` 中的直接依赖已经固定到精确版本，`constraints-dev.txt` 则包含开发环境中经过验证的完整依赖集合。
 
-If you want to minimize pip backtracking and repeated resolver retries, prefer:
+如果你希望尽量减少 pip 回溯和重复解析重试，建议优先使用：
 
 ` .venv/bin/pip install -c constraints-dev.txt -e .[dev] `
 
-The public mailbox live-update feature uses WebSocket transport. The project now declares `websockets` as a runtime dependency, so if you pulled new changes into an existing virtualenv, rerun the install command above before restarting `rapid-inbox-http`.
+公开邮箱的实时更新功能基于 WebSocket。项目现在已将 `websockets` 声明为运行时依赖，因此如果你是在已有虚拟环境中拉取了新代码，请在重启 `rapid-inbox-http` 前重新执行上面的安装命令。
 
-## Notes
+## 说明
 
-- The HTTP runner starts the FastAPI app and the embedded `aiosmtpd` listener with Uvicorn.
-- The SMTP runner starts the standalone `aiosmtpd` listener and keeps it alive until interrupted.
-- The admin login page uses the bootstrap admin credentials created on startup.
+- HTTP 启动器会使用 Uvicorn 启动 FastAPI 应用和内嵌的 `aiosmtpd` 监听器。
+- SMTP 启动器会单独启动 `aiosmtpd` 监听器，并在被中断前持续运行。
+- 管理后台登录页使用启动时创建的初始管理员凭据。

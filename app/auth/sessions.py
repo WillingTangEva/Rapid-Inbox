@@ -4,7 +4,7 @@ import hashlib
 import secrets
 import sqlite3
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.config import Settings
@@ -24,7 +24,7 @@ def _hash_session_token(token: str) -> str:
 
 def _utc_now_plus_days(days: int) -> str:
     return (
-        datetime.now(UTC).replace(microsecond=0) + timedelta(days=days)
+        datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=days)
     ).isoformat().replace("+00:00", "Z")
 
 

@@ -32,7 +32,7 @@
 
 ### 3.1 选型
 
-- **语言**：Python 3.12+
+- **语言**：Python 3.10+
 - **SMTP 收件层**：`aiosmtpd`
 - **HTTP/API 层**：FastAPI
 - **数据库**：SQLite

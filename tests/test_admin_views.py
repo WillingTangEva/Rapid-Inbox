@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from itertools import count
 import re
 
@@ -11,7 +11,7 @@ import app.runtime as runtime_module
 
 
 def _patch_sequenced_utc_now(monkeypatch) -> None:
-    base = datetime(2026, 4, 18, 20, 0, 0, tzinfo=UTC)
+    base = datetime(2026, 4, 18, 20, 0, 0, tzinfo=timezone.utc)
     ticks = count()
 
     monkeypatch.setattr(
