@@ -76,6 +76,44 @@
     font-weight: 680;
   }
 
+  .settings-alert--error {
+    border-color: #efc4be;
+    background: #fff5f3;
+    color: var(--danger);
+  }
+
+  .security-zone {
+    margin-top: 1.5rem;
+  }
+
+  .settings-form {
+    display: grid;
+    max-width: 520px;
+    gap: 0.9rem;
+    margin-top: 1rem;
+  }
+
+  .settings-field {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .settings-field span {
+    color: var(--muted);
+    font-size: 0.86rem;
+    font-weight: 680;
+  }
+
+  .settings-field input {
+    width: 100%;
+    min-height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 0 0.85rem;
+  }
+
   .danger-zone {
     margin-top: 1.5rem;
     border-color: #efc4be;
@@ -157,6 +195,12 @@
     </div>
   {% endif %}
 
+  {% if password_changed %}
+    <div class="settings-alert">
+      管理员密码已更新。
+    </div>
+  {% endif %}
+
   {% if settings_items %}
     <div class="settings-grid">
       {% for item in settings_items %}
@@ -180,6 +224,34 @@
       <p>当前没有可展示的系统设置</p>
     </div>
   {% endif %}
+</section>
+
+<section class="card security-zone">
+  <p class="eyebrow">安全</p>
+  <h2 style="margin-bottom: 0.5rem;">修改管理员密码</h2>
+  <p class="muted" style="margin: 0;">更新当前登录管理员的密码。修改后请使用新密码登录。</p>
+  {% if password_error %}
+    <div class="settings-alert settings-alert--error" style="margin-top: 1rem;">
+      {{ password_error }}
+    </div>
+  {% endif %}
+  <form class="settings-form" method="post" action="/admin/settings/password">
+    <label class="settings-field">
+      <span>当前密码</span>
+      <input type="password" name="current_password" autocomplete="current-password" required />
+    </label>
+    <label class="settings-field">
+      <span>新密码</span>
+      <input type="password" name="new_password" autocomplete="new-password" minlength="8" required />
+    </label>
+    <label class="settings-field">
+      <span>确认新密码</span>
+      <input type="password" name="confirm_password" autocomplete="new-password" minlength="8" required />
+    </label>
+    <div class="button-row">
+      <button class="button button--primary" type="submit">更新密码</button>
+    </div>
+  </form>
 </section>
 
 <section class="card danger-zone">

@@ -102,6 +102,38 @@ class AuthService:
         admin["last_login_ip"] = ip if ip is not None else row["last_login_ip"]
         return admin
 
+    async def change_admin_password(self, admin_id: int, current_password: str, new_password: str) -> None:
+        with connect_database(self.settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT id, password_hash
+                FROM admins
+                WHERE id = ? AND is_active = 1
+                """,
+                (admin_id,),
+            ).fetchone()
+
+        if row is None or not verify_password(current_password, row["password_hash"]):
+            raise LookupError("invalid admin credentials")
+
+        password_hash = hash_password(new_password)
+        updated_at = utc_now()
+
+        def operation(connection: sqlite3.Connection) -> None:
+            cursor = connection.execute(
+                """
+                UPDATE admins
+                SET password_hash = ?,
+                    updated_at = ?
+                WHERE id = ? AND is_active = 1
+                """,
+                (password_hash, updated_at, admin_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError("admin not found")
+
+        await self.writer.execute(operation)
+
     async def create_session(self, *, admin_id: int, ip: str | None, user_agent: str | None) -> dict[str, Any]:
         session_id = f"sess_{uuid.uuid4().hex}"
         token = secrets.token_urlsafe(32)

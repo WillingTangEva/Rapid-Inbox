@@ -336,6 +336,64 @@ async def test_admin_settings_page_can_clear_all_mail(app_client, runtime, sampl
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_page_can_change_admin_password(app_client, runtime) -> None:
+    await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+
+    settings_page = await app_client.get("/admin/settings")
+    rejected = await app_client.post(
+        "/admin/settings/password",
+        data={
+            "current_password": "wrong-password",
+            "new_password": "new-admin-password",
+            "confirm_password": "new-admin-password",
+        },
+    )
+    changed = await app_client.post(
+        "/admin/settings/password",
+        data={
+            "current_password": runtime.settings.bootstrap_admin_password,
+            "new_password": "new-admin-password",
+            "confirm_password": "new-admin-password",
+        },
+    )
+
+    assert settings_page.status_code == 200
+    assert "修改管理员密码" in settings_page.text
+    assert rejected.status_code == 400
+    assert "当前密码不正确" in rejected.text
+    assert changed.status_code == 303
+    assert changed.headers["location"] == "/admin/settings?password_changed=1"
+
+    with connect_database(runtime.settings.database_path) as connection:
+        audit = connection.execute(
+            "SELECT action, resource_type FROM audit_logs WHERE action = ?",
+            ("admin.password.update",),
+        ).fetchone()
+
+    assert audit is not None
+    assert audit["resource_type"] == "admin"
+
+    await app_client.post("/admin/logout")
+    old_login = await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+    )
+    new_login = await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": "new-admin-password"},
+        follow_redirects=True,
+    )
+
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200
+    assert "域名管理" in new_login.text
+
+
+@pytest.mark.asyncio
 async def test_admin_api_keys_page_uses_checkbox_scopes_and_domain_hints(app_client, runtime) -> None:
     await runtime.create_domain("adb.com")
     await app_client.post(

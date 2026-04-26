@@ -927,21 +927,10 @@ def _mail_store_stats(request: Request) -> dict[str, int]:
         }
 
 
-@router.get("/admin/settings", response_class=HTMLResponse)
-async def settings_page(
-    request: Request,
-    mail_cleared: int = Query(default=0, ge=0, le=1),
-    cleared_messages: int = Query(default=0, ge=0),
-    cleared_mailboxes: int = Query(default=0, ge=0),
-    cleared_sessions: int = Query(default=0, ge=0),
-) -> Response:
-    admin_or_response = await _require_admin(request)
-    if isinstance(admin_or_response, Response):
-        return admin_or_response
-
+def _settings_items(request: Request) -> list[dict[str, Any]]:
     runtime_settings = request.app.state.runtime.get_settings()
     app_settings = request.app.state.settings
-    settings_items = [
+    return [
         {
             "label": "最大邮件大小",
             "value": runtime_settings["max_message_size_bytes"],
@@ -964,21 +953,107 @@ async def settings_page(
         },
     ]
 
+
+def _settings_context(
+    request: Request,
+    admin: dict[str, Any],
+    *,
+    mail_clear_result: dict[str, int] | None = None,
+    password_changed: bool = False,
+    password_error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "page_title": "系统设置",
+        "admin": admin,
+        "settings_items": _settings_items(request),
+        "mail_store_stats": _mail_store_stats(request),
+        "mail_clear_result": mail_clear_result,
+        "password_changed": password_changed,
+        "password_error": password_error,
+    }
+
+
+@router.get("/admin/settings", response_class=HTMLResponse)
+async def settings_page(
+    request: Request,
+    mail_cleared: int = Query(default=0, ge=0, le=1),
+    cleared_messages: int = Query(default=0, ge=0),
+    cleared_mailboxes: int = Query(default=0, ge=0),
+    cleared_sessions: int = Query(default=0, ge=0),
+    password_changed: int = Query(default=0, ge=0, le=1),
+) -> Response:
+    admin_or_response = await _require_admin(request)
+    if isinstance(admin_or_response, Response):
+        return admin_or_response
+
     return _render(
         request,
         "admin/settings.html",
-        {
-            "page_title": "系统设置",
-            "admin": admin_or_response,
-            "settings_items": settings_items,
-            "mail_store_stats": _mail_store_stats(request),
-            "mail_clear_result": {
+        _settings_context(
+            request,
+            admin_or_response,
+            mail_clear_result={
                 "messages": cleared_messages,
                 "mailboxes": cleared_mailboxes,
                 "smtp_sessions": cleared_sessions,
             } if mail_cleared else None,
-        },
+            password_changed=bool(password_changed),
+        ),
     )
+
+
+@router.post("/admin/settings/password")
+async def change_admin_password(request: Request) -> Response:
+    admin_or_response = await _require_admin(request)
+    if isinstance(admin_or_response, Response):
+        return admin_or_response
+
+    form = _parse_form_body(await request.body())
+    current_password = form.get("current_password", "")
+    new_password = form.get("new_password", "")
+    confirm_password = form.get("confirm_password", "")
+
+    password_error: str | None = None
+    if not current_password or not new_password or not confirm_password:
+        password_error = "请填写当前密码和新密码。"
+    elif len(new_password) < 8:
+        password_error = "新密码至少需要 8 个字符。"
+    elif new_password != confirm_password:
+        password_error = "两次输入的新密码不一致。"
+
+    if password_error is not None:
+        return _render(
+            request,
+            "admin/settings.html",
+            _settings_context(request, admin_or_response, password_error=password_error),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        await request.app.state.runtime.auth.change_admin_password(
+            int(admin_or_response["id"]),
+            current_password,
+            new_password,
+        )
+    except LookupError:
+        return _render(
+            request,
+            "admin/settings.html",
+            _settings_context(request, admin_or_response, password_error="当前密码不正确。"),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    await request.app.state.runtime.audit.log(
+        "admin",
+        str(admin_or_response.get("username") or admin_or_response.get("id") or "admin"),
+        "admin.password.update",
+        "admin",
+        str(admin_or_response.get("id")),
+        "success",
+        ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    return RedirectResponse("/admin/settings?password_changed=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/admin/settings/clear-mail")
