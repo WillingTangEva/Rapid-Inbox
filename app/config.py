@@ -23,6 +23,7 @@ class Settings:
     smtp_max_concurrent_connections: int = 100
     smtp_connection_rate_limit_count: int = 20
     smtp_connection_rate_limit_window_seconds: int = 60
+    smtp_close_after_data: bool = True
     parse_worker_count: int = 4
     fsync_storage_writes: bool = False
     disk_warning_threshold_percent: int = 85
@@ -153,6 +154,7 @@ def default_settings(base_dir: Path) -> Settings:
             "SMTP_CONNECTION_RATE_LIMIT_WINDOW_SECONDS",
             60,
         ),
+        smtp_close_after_data=_coerce_bool(merged, "SMTP_CLOSE_AFTER_DATA", True),
         parse_worker_count=_coerce_int(merged, "PARSE_WORKER_COUNT", 4),
         fsync_storage_writes=_coerce_bool(merged, "FSYNC_STORAGE_WRITES", False),
         disk_warning_threshold_percent=_coerce_int(merged, "DISK_WARNING_THRESHOLD_PERCENT", 85),

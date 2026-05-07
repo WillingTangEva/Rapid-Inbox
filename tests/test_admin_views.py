@@ -56,6 +56,32 @@ async def test_admin_login_and_dashboard_page_flow(app_client, runtime) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dashboard_current_smtp_sessions_uses_runtime_active_connections(app_client, runtime) -> None:
+    await _login_and_change_initial_password(app_client, runtime)
+    with connect_database(runtime.settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO smtp_sessions (
+                id,
+                remote_ip,
+                status,
+                connect_at,
+                last_command_at
+            ) VALUES ('smtp_stale_open', '127.0.0.1', 'open', ?, ?)
+            """,
+            ("2026-04-18T20:00:00Z", "2026-04-18T20:00:00Z"),
+        )
+
+    response = await app_client.get("/admin")
+
+    assert response.status_code == 200
+    assert re.search(
+        r"当前 SMTP 会话[\s\S]*?<span class=\"stat-tile__value\">0</span>",
+        response.text,
+    )
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_admin_must_change_password_before_other_admin_pages(app_client, runtime) -> None:
     await app_client.post(
         "/admin/login",

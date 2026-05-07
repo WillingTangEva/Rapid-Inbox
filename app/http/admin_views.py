@@ -459,7 +459,7 @@ def _dashboard_stats(request: Request) -> dict[str, Any]:
         ]
         delivery_chart = _delivery_chart(connection, hours=24)
 
-    sessions_value = stats["active_connections"] or stats["open_sessions"]
+    sessions_value = stats["active_connections"]
     disk_threshold = runtime.settings.disk_warning_threshold_percent
     disk_state = (
         "danger" if disk_used_percent >= disk_threshold

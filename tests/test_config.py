@@ -25,6 +25,7 @@ def test_settings_include_bootstrap_and_operational_defaults(tmp_path: Path) -> 
     assert settings.bootstrap_admin_password == "change-me-now"
     assert settings.smtp_port == 25
     assert settings.max_recipients_per_message == 20
+    assert settings.smtp_close_after_data is True
     assert settings.session_cookie_name == "rapid_inbox_session"
 
 
@@ -43,6 +44,7 @@ def test_default_settings_loads_values_from_dotenv(tmp_path: Path) -> None:
                 "SMTP_PORT=2525",
                 "MAX_MESSAGE_SIZE_BYTES=1024",
                 "MAX_RECIPIENTS_PER_MESSAGE=9",
+                "SMTP_CLOSE_AFTER_DATA=false",
                 "PARSE_WORKER_COUNT=7",
                 "FSYNC_STORAGE_WRITES=true",
                 "ADMIN_TOKEN=admin-token-1",
@@ -65,6 +67,7 @@ def test_default_settings_loads_values_from_dotenv(tmp_path: Path) -> None:
     assert settings.smtp_port == 2525
     assert settings.max_message_size_bytes == 1024
     assert settings.max_recipients_per_message == 9
+    assert settings.smtp_close_after_data is False
     assert settings.parse_worker_count == 7
     assert settings.fsync_storage_writes is True
     assert settings.admin_token == "admin-token-1"

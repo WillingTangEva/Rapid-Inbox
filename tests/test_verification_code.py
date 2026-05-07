@@ -75,6 +75,15 @@ def test_extract_eight_digit_code() -> None:
     ) == "12345678"
 
 
+def test_extract_chinese_eight_digit_confirmation_code() -> None:
+    assert _extract(
+        subject="账户操作确认",
+        sender="verify@example.test",
+        text_body="本次操作确认码为 10293847，请在页面中输入完成验证。",
+        html_body="<p>本次操作确认码为</p><code style=\"font-size:24px;\">10293847</code>",
+    ) == "10293847"
+
+
 def test_extract_grouped_digit_code() -> None:
     assert _extract(
         subject="Sign in to Example",

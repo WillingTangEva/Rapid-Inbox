@@ -11,6 +11,7 @@ from app import main as app_main
 from app.runtime import RapidInboxRuntime
 from app import smtp_runner
 from app.smtp.handler import RapidInboxHandler
+from app.smtp.server import RapidInboxController, SMTPServer
 
 
 @pytest.mark.asyncio
@@ -63,6 +64,114 @@ async def test_smtp_handler_accepts_allowed_domain_and_rejects_unknown(tmp_path,
         assert row["last_mail_from"] == "sender@example.com"
         assert row["last_rcpt_to_sample"] == "foo@example.com"
         assert row["disconnect_at"] is not None
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_smtp_handler_releases_session_when_client_disconnects_without_quit(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    settings = default_settings(tmp_path)
+    settings.smtp_close_after_data = False
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+
+        session = SimpleNamespace(peer=("127.0.0.1", 2525), host_name="mx1.test", ssl=None)
+        envelope = SimpleNamespace(rcpt_tos=[], mail_from="sender@example.com", content=sample_email_bytes)
+
+        accepted = await handler.handle_RCPT(None, session, envelope, "foo@adb.com", [])
+        queued = await handler.handle_DATA(None, session, envelope)
+        assert accepted == "250 OK"
+        assert queued.startswith("250 queued as ")
+        assert runtime.active_smtp_connection_count() == 1
+
+        await handler.handle_DISCONNECT(None, session, envelope, None)
+
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT status, disconnect_at, close_reason
+                FROM smtp_sessions
+                WHERE id = ?
+                """,
+                (session.rapid_inbox_session_id,),
+            ).fetchone()
+            events = [
+                str(event["event_type"])
+                for event in connection.execute(
+                    """
+                    SELECT event_type
+                    FROM smtp_events
+                    WHERE session_id = ?
+                    ORDER BY seq ASC
+                    """,
+                    (session.rapid_inbox_session_id,),
+                ).fetchall()
+            ]
+
+        assert runtime.active_smtp_connection_count() == 0
+        assert row["status"] == "closed"
+        assert row["disconnect_at"] is not None
+        assert row["close_reason"] == "connection lost"
+        assert events[-1] == "disconnect"
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_smtp_handler_schedules_transport_close_after_successful_data(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    class FakeLoop:
+        def __init__(self) -> None:
+            self.delay = None
+            self.callback = None
+
+        def call_later(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def is_closing(self) -> bool:
+            return self.closed
+
+        def close(self) -> None:
+            self.closed = True
+
+    settings = default_settings(tmp_path)
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+    fake_loop = FakeLoop()
+    fake_transport = FakeTransport()
+    server = SimpleNamespace(loop=fake_loop, transport=fake_transport)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+
+        session = SimpleNamespace(peer=("127.0.0.1", 2525), host_name="mx1.test", ssl=None)
+        envelope = SimpleNamespace(rcpt_tos=[], mail_from="sender@example.com", content=sample_email_bytes)
+
+        await handler.handle_RCPT(server, session, envelope, "foo@adb.com", [])
+        queued = await handler.handle_DATA(server, session, envelope)
+
+        assert queued.startswith("250 queued as ")
+        assert fake_loop.delay == 0.05
+        assert fake_loop.callback is not None
+
+        fake_loop.callback()
+
+        assert fake_transport.closed is True
     finally:
         await runtime.stop()
 
@@ -221,6 +330,14 @@ def test_http_runner_builds_embedded_smtp_app(monkeypatch, tmp_path) -> None:
     assert calls["host"] == "127.0.0.1"
     assert calls["port"] == 8000
     assert calls["reload"] is False
+
+
+def test_smtp_server_uses_disconnect_aware_protocol(tmp_path) -> None:
+    settings = default_settings(tmp_path)
+    runtime = SimpleNamespace(settings=settings)
+    server = SMTPServer(runtime)
+
+    assert isinstance(server._controller, RapidInboxController)
 
 
 @pytest.mark.asyncio

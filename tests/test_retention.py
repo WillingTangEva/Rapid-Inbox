@@ -236,6 +236,50 @@ async def test_retention_deletes_stale_smtp_sessions_without_dropping_active_con
 
 
 @pytest.mark.asyncio
+async def test_runtime_start_marks_previous_open_smtp_sessions_as_orphaned(tmp_path) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    await runtime.stop()
+
+    with connect_database(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO smtp_sessions (
+                id,
+                remote_ip,
+                status,
+                connect_at,
+                last_command_at
+            ) VALUES ('smtp_orphaned', '127.0.0.1', 'open', ?, ?)
+            """,
+            ("2026-04-18T20:00:00Z", "2026-04-18T20:00:01Z"),
+        )
+
+    restarted_runtime = RapidInboxRuntime(settings)
+    await restarted_runtime.start()
+    try:
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT status, disconnect_at, close_reason
+                FROM smtp_sessions
+                WHERE id = 'smtp_orphaned'
+                """
+            ).fetchone()
+
+        assert row["status"] == "error"
+        assert row["disconnect_at"] is not None
+        assert row["close_reason"] == "runtime restarted before disconnect"
+    finally:
+        await restarted_runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_metric_bucket_retention_runs_without_expired_mail_or_sessions(tmp_path, monkeypatch) -> None:
     settings = Settings(
         storage_root=tmp_path / "storage",

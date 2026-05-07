@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from threading import RLock
 from typing import Any
 from time import monotonic, time_ns
 from pathlib import Path
@@ -51,7 +52,7 @@ class RapidInboxRuntime:
         self.parser = MessageParser(self.storage)
         self.parse_queue = ParseQueue(self._parse_message, worker_count=settings.parse_worker_count)
         self._mail_store_lock = asyncio.Lock()
-        self._smtp_connection_lock = asyncio.Lock()
+        self._smtp_connection_lock = RLock()
         self._active_smtp_connections: dict[str, str] = {}
         self._smtp_ip_windows: dict[str, deque[float]] = {}
         self._retention_cleanup_task: asyncio.Task[None] | None = None
@@ -64,6 +65,7 @@ class RapidInboxRuntime:
         initialize_database(self.settings.database_path)
         await self.auth.ensure_bootstrap_admin()
         await self.system_settings.load_persisted_settings()
+        await self.writer.execute(self._mark_orphaned_smtp_sessions_closed)
         # Swap the plain config token for a string-like proxy that can validate DB-backed keys too.
         self.settings.public_api_key = self.api_keys.configure_legacy_public_api_key(self._legacy_public_api_key)
         await self.parse_queue.start()
@@ -80,7 +82,7 @@ class RapidInboxRuntime:
             await self.parse_queue.stop(discard_pending=True, timeout=5.0)
         except asyncio.CancelledError:
             pass
-        async with self._smtp_connection_lock:
+        with self._smtp_connection_lock:
             self._active_smtp_connections.clear()
             self._smtp_ip_windows.clear()
 
@@ -233,7 +235,8 @@ class RapidInboxRuntime:
         return [str(row["id"]) for row in rows]
 
     def _smtp_session_expiration_filter(self, cutoff: str) -> tuple[str, list[Any]]:
-        active_session_ids = tuple(self._active_smtp_connections)
+        with self._smtp_connection_lock:
+            active_session_ids = tuple(self._active_smtp_connections)
         where_clause = "COALESCE(disconnect_at, last_command_at, connect_at) <= ?"
         params: list[Any] = [cutoff]
         if active_session_ids:
@@ -548,7 +551,7 @@ class RapidInboxRuntime:
         return self.audit.list_logs(limit=limit, offset=offset)
 
     async def register_smtp_connection(self, session_id: str, remote_ip: str) -> tuple[bool, str | None]:
-        async with self._smtp_connection_lock:
+        with self._smtp_connection_lock:
             if session_id in self._active_smtp_connections:
                 return True, None
 
@@ -590,12 +593,28 @@ class RapidInboxRuntime:
         for ip in stale_ips:
             self._smtp_ip_windows.pop(ip, None)
 
-    async def release_smtp_connection(self, session_id: str) -> None:
-        async with self._smtp_connection_lock:
-            self._active_smtp_connections.pop(session_id, None)
+    async def release_smtp_connection(self, session_id: str) -> bool:
+        with self._smtp_connection_lock:
+            return self._active_smtp_connections.pop(session_id, None) is not None
 
     def active_smtp_connection_count(self) -> int:
-        return len(self._active_smtp_connections)
+        with self._smtp_connection_lock:
+            return len(self._active_smtp_connections)
+
+    def _mark_orphaned_smtp_sessions_closed(self, connection: sqlite3.Connection) -> int:
+        now = utc_now()
+        cursor = connection.execute(
+            """
+            UPDATE smtp_sessions
+            SET status = 'error',
+                disconnect_at = COALESCE(disconnect_at, ?),
+                last_command_at = COALESCE(last_command_at, ?),
+                close_reason = COALESCE(close_reason, 'runtime restarted before disconnect')
+            WHERE status = 'open'
+            """,
+            (now, now),
+        )
+        return int(cursor.rowcount or 0)
 
     def _clear_mail_tables(self, connection: sqlite3.Connection) -> dict[str, int]:
         connection.execute("PRAGMA foreign_keys = OFF")
@@ -779,6 +798,35 @@ class RapidInboxRuntime:
 
         await self.writer.execute(operation)
         await self.release_smtp_connection(session_id)
+
+    async def close_lost_smtp_session(
+        self,
+        session_id: str,
+        *,
+        status: str = "closed",
+        close_reason: str | None = None,
+        result_code: int | None = None,
+        result_message: str | None = None,
+    ) -> bool:
+        if not await self.release_smtp_connection(session_id):
+            return False
+
+        now = utc_now()
+
+        def operation(connection: sqlite3.Connection) -> None:
+            self._update_smtp_session_summary(
+                connection,
+                session_id,
+                now,
+                status=status,
+                disconnect_at=now,
+                close_reason=close_reason,
+                result_code=result_code,
+                result_message=result_message,
+            )
+
+        await self.writer.execute(operation)
+        return True
 
     async def accept_message(
         self,

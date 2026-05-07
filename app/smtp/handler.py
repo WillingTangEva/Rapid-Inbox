@@ -140,6 +140,8 @@ class RapidInboxHandler:
                 "state": "queued",
             },
         )
+        if message_id is not None and self.runtime.settings.smtp_close_after_data:
+            self._schedule_transport_close(server)
         return result
 
     async def handle_QUIT(self, server, session, envelope):
@@ -165,6 +167,30 @@ class RapidInboxHandler:
         except Exception:
             pass
         return "221 2.0.0 Bye"
+
+    async def handle_DISCONNECT(self, server, session, envelope, error=None):
+        session_id = getattr(session, "rapid_inbox_session_id", None)
+        if session_id is None:
+            return
+        status = "error" if error is not None else "closed"
+        close_reason = "connection lost"
+        if error is not None:
+            close_reason = f"connection lost: {error.__class__.__name__}"
+        closed = await self.runtime.close_lost_smtp_session(
+            session_id,
+            status=status,
+            close_reason=close_reason,
+        )
+        if not closed:
+            return
+        await self._publish_session_event(
+            session_id,
+            {
+                **self._session_event(session, session_id, {"state": "disconnect"}),
+                "type": "disconnect",
+                "close_reason": close_reason,
+            },
+        )
 
     async def _ensure_session_allowed(self, session, session_id: str) -> tuple[bool, str | None]:
         peer = getattr(session, "peer", None) or ("unknown", None)
@@ -195,6 +221,21 @@ class RapidInboxHandler:
                 continue
             limit = min(limit, int(domain["max_message_size_bytes"]))
         return limit
+
+    def _schedule_transport_close(self, server) -> None:
+        loop = getattr(server, "loop", None)
+        transport = getattr(server, "transport", None)
+        if loop is None or transport is None:
+            return
+
+        def close_transport() -> None:
+            if not transport.is_closing():
+                transport.close()
+
+        try:
+            loop.call_later(0.05, close_transport)
+        except RuntimeError:
+            return
 
     def _ensure_session_id(self, session) -> str:
         session_id = getattr(session, "rapid_inbox_session_id", None)
