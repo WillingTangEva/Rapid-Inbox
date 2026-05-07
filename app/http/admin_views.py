@@ -1766,6 +1766,29 @@ async def revoke_api_key(api_key_id: int, request: Request) -> Response:
     )
 
 
+@router.post("/admin/api-keys/{api_key_id}/delete")
+async def delete_api_key_from_form(api_key_id: int, request: Request) -> Response:
+    admin_or_response = await _require_admin(request)
+    if isinstance(admin_or_response, Response):
+        return admin_or_response
+
+    try:
+        await request.app.state.runtime.api_keys.delete_key(api_key_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    await _log_admin_audit(request, admin_or_response, "api_keys.delete", "api_key", str(api_key_id), "success")
+    form = _parse_form_body(await request.body())
+    limit = _parse_positive_int(form.get("limit"), default=DEFAULT_PAGE_SIZE, field_name="limit")
+    offset = _parse_non_negative_int(form.get("offset"), default=0, field_name="offset")
+    return RedirectResponse(
+        f"/admin/api-keys?limit={limit}&offset={offset}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
 @router.get("/admin/audit", response_class=HTMLResponse)
 async def audit_page(
     request: Request,

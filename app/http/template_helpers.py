@@ -116,6 +116,7 @@ _ACTION_LABELS = {
     "api_keys.update": "更新 API 密钥",
     "api_keys.rotate": "轮换 API 密钥",
     "api_keys.revoke": "吊销 API 密钥",
+    "api_keys.delete": "删除 API 密钥",
 }
 
 _PLUS_ADDRESSING_LABELS = {

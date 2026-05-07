@@ -405,6 +405,19 @@
                   <i data-lucide="x-circle"></i>吊销
                 </button>
               </form>
+            {% elif api_key.status == 'revoked' %}
+              <form
+                method="post"
+                action="/admin/api-keys/{{ api_key.id }}/delete"
+                style="margin: 0;"
+                onsubmit="return confirm('确认永久删除该已吊销的 API 密钥？此操作不可恢复。')"
+              >
+                <input type="hidden" name="limit" value="{{ pagination.limit }}" />
+                <input type="hidden" name="offset" value="{{ pagination.offset }}" />
+                <button class="button button--danger button--sm" type="submit">
+                  <i data-lucide="trash-2"></i>删除
+                </button>
+              </form>
             {% endif %}
           </div>
         </li>

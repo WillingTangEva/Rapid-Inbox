@@ -347,6 +347,28 @@ class ApiKeyService:
                 self._usage_windows.pop(api_key_id, None)
         return updated
 
+    async def delete_key(self, api_key_id: int) -> dict[str, Any]:
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            row = connection.execute(
+                """
+                SELECT id, status
+                FROM api_keys
+                WHERE id = ?
+                """,
+                (api_key_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError("api key not found")
+            if str(row["status"]) != "revoked":
+                raise ValueError("api key must be revoked before deletion")
+            connection.execute("DELETE FROM api_keys WHERE id = ?", (api_key_id,))
+            return {"id": int(row["id"]), "deleted": True}
+
+        deleted = await self.writer.execute(operation)
+        with self._usage_lock:
+            self._usage_windows.pop(api_key_id, None)
+        return deleted
+
     async def revoke_key(self, api_key_id: int) -> dict[str, Any]:
         revoked_at = utc_now()
 

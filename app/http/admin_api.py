@@ -920,3 +920,23 @@ async def revoke_api_key(
 
     await _write_audit_best_effort(request, admin, "api_keys.revoke", "api_key", str(api_key_id), "success")
     return revoked
+
+
+@router.delete("/api/v1/admin/api-keys/{api_key_id}")
+async def delete_api_key(
+    api_key_id: int,
+    request: Request,
+    admin: PermissionContext = Depends(require_admin_key),
+) -> dict[str, Any]:
+    require_admin_scope(admin, "api_keys.write")
+    await _record_admin_key_usage(request, admin)
+
+    try:
+        deleted = await request.app.state.runtime.api_keys.delete_key(api_key_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await _write_audit_best_effort(request, admin, "api_keys.delete", "api_key", str(api_key_id), "success")
+    return {"deleted": True, "api_key_id": api_key_id}
