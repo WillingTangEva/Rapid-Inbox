@@ -82,6 +82,7 @@ class RapidInboxRuntime:
             pass
         async with self._smtp_connection_lock:
             self._active_smtp_connections.clear()
+            self._smtp_ip_windows.clear()
 
     async def create_domain(self, root_domain: str, **kwargs: Any) -> dict[str, Any]:
         return await self.domains.create_domain(root_domain, **kwargs)
@@ -560,15 +561,34 @@ class RapidInboxRuntime:
             if rate_limit > 0 and window_seconds > 0:
                 now = monotonic()
                 cutoff = now - window_seconds
+                self._evict_stale_smtp_ip_windows(cutoff)
                 window = self._smtp_ip_windows.setdefault(remote_ip, deque())
                 while window and window[0] <= cutoff:
                     window.popleft()
                 if len(window) >= rate_limit:
+                    if not window:
+                        self._smtp_ip_windows.pop(remote_ip, None)
                     return False, "per-ip connection rate limit exceeded"
                 window.append(now)
 
             self._active_smtp_connections[session_id] = remote_ip
             return True, None
+
+    def _evict_stale_smtp_ip_windows(self, cutoff: float) -> None:
+        """Drop per-IP rate-limit windows that no longer hold any fresh timestamps.
+
+        Keeps the `_smtp_ip_windows` map from growing without bound when the
+        server sees many one-off source IPs.
+        """
+
+        stale_ips: list[str] = []
+        for ip, window in self._smtp_ip_windows.items():
+            while window and window[0] <= cutoff:
+                window.popleft()
+            if not window:
+                stale_ips.append(ip)
+        for ip in stale_ips:
+            self._smtp_ip_windows.pop(ip, None)
 
     async def release_smtp_connection(self, session_id: str) -> None:
         async with self._smtp_connection_lock:
@@ -1447,7 +1467,7 @@ class RapidInboxRuntime:
                     int(attachment.is_inline),
                     utc_now(),
                 ),
-        )
+            )
         return attachment_paths
 
     def _mark_message_parse_failed(self, connection: sqlite3.Connection, message_id: str, parse_error: str) -> list[str]:

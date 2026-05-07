@@ -12,6 +12,7 @@ class SMTPServer:
             hostname=runtime.settings.smtp_host,
             port=runtime.settings.smtp_port,
             timeout=runtime.settings.smtp_idle_timeout_seconds,
+            data_size_limit=int(runtime.settings.max_message_size_bytes),
         )
 
     def start(self) -> None:

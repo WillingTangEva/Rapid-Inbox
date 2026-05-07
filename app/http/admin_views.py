@@ -928,6 +928,15 @@ async def login(request: Request) -> Response:
     username = form.get("username", "").strip()
     password = form.get("password", "")
     if not username or not password:
+        await _log_admin_audit(
+            request,
+            None,
+            "admin.login",
+            "admin",
+            None,
+            "failure",
+            details={"username": username, "reason": "missing_credentials"},
+        )
         return _render(
             request,
             "admin/login.html",
@@ -942,6 +951,15 @@ async def login(request: Request) -> Response:
     try:
         admin = await request.app.state.runtime.auth.authenticate_admin(username, password, ip=_client_ip(request))
     except LookupError:
+        await _log_admin_audit(
+            request,
+            None,
+            "admin.login",
+            "admin",
+            None,
+            "failure",
+            details={"username": username},
+        )
         return _render(
             request,
             "admin/login.html",

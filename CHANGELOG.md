@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+- 让 SMTP 监听器按 `MAX_MESSAGE_SIZE_BYTES` 传入 `data_size_limit`，避免被 aiosmtpd 默认 32 MB 限制截断。
+- 管理员登录失败时也写入审计日志，方便事后追踪爆破尝试。
+- 清理 SMTP per-IP 限流窗口中的过期条目，防止长期运行后内存缓慢增长。
+- 修正 `_apply_parsed_message` 中 INSERT attachment 的缩进风格。
+- 更正 README：邮件默认保留时间从 20 分钟修正为 10 分钟，与代码和测试一致。
 - 完善 API 密钥编辑、授权范围和状态管理。
 - 增加邮件自动保留与过期清理能力。
 - 增强清空邮件数据后的文件清理和 SQLite 压缩流程。
