@@ -114,6 +114,140 @@
     width: 3px; background: var(--danger);
   }
 
+  /* === Delivery curve chart === */
+  .chart-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-xs);
+    overflow: hidden;
+  }
+  .chart-card__head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 18px 22px 12px;
+    flex-wrap: wrap;
+  }
+  .chart-card__title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .chart-card__sub {
+    margin: 4px 0 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+  .chart-card__stats {
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .chart-stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: var(--font-serif);
+  }
+  .chart-stat strong {
+    color: var(--accent-strong);
+    font-weight: 600;
+    font-size: 1.4rem;
+    letter-spacing: -0.01em;
+    line-height: 1;
+  }
+  .chart-stat span {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: var(--font-sans);
+  }
+  .chart-card__body {
+    padding: 0 12px 6px;
+    position: relative;
+  }
+  .chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .chart-svg .chart-grid {
+    stroke: var(--border-faint);
+    stroke-width: 1;
+    stroke-dasharray: 3 4;
+  }
+  .chart-svg .chart-axis {
+    fill: var(--text-faint);
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+  .chart-svg .chart-area {
+    fill: url(#chart-area-gradient);
+    opacity: 0.85;
+  }
+  .chart-svg .chart-line {
+    fill: none;
+    stroke: var(--accent-strong);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .chart-svg .chart-dot {
+    fill: var(--bg-elevated);
+    stroke: var(--accent-strong);
+    stroke-width: 1.5;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .chart-svg .chart-hot {
+    fill: transparent;
+    stroke: transparent;
+    cursor: crosshair;
+  }
+  .chart-svg .chart-hot:hover + .chart-dot,
+  .chart-svg g:hover > .chart-dot { opacity: 1; }
+  .chart-svg .chart-peak-dot {
+    fill: var(--accent-strong);
+    stroke: var(--bg-elevated);
+    stroke-width: 2;
+  }
+  .chart-tooltip {
+    position: absolute;
+    pointer-events: none;
+    transform: translate(-50%, -110%);
+    padding: 6px 10px;
+    background: var(--text);
+    color: var(--bg-elevated);
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    box-shadow: var(--shadow-xs);
+    z-index: 2;
+  }
+  .chart-tooltip.is-visible { opacity: 1; }
+  .chart-tooltip::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -4px;
+    width: 0;
+    height: 0;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid var(--text);
+  }
+
   /* === Activity grid === */
   .activity-grid {
     display: grid;
@@ -284,6 +418,86 @@
   </div>
 </section>
 
+<section class="dash-section" aria-labelledby="dash-chart-title">
+  <div class="dash-section__head">
+    <h2 class="dash-section__title" id="dash-chart-title">收件趋势 · 24 小时</h2>
+    <span class="dash-section__hint">每小时投递数曲线</span>
+  </div>
+  <div class="chart-card">
+    <header class="chart-card__head">
+      <div>
+        <h3 class="chart-card__title">最近 24 小时收件曲线</h3>
+        <p class="chart-card__sub">按整点聚合，截至当前时刻为止。</p>
+      </div>
+      <div class="chart-card__stats">
+        <span class="chart-stat"><strong>{{ delivery_chart.total }}</strong><span>总计</span></span>
+        <span class="chart-stat"><strong>{{ delivery_chart.peak }}</strong><span>峰值/小时</span></span>
+      </div>
+    </header>
+    <div class="chart-card__body">
+      <div class="chart-tooltip" data-chart-tooltip></div>
+      <svg
+        class="chart-svg"
+        viewBox="0 0 {{ delivery_chart.view_width }} {{ delivery_chart.view_height }}"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="过去 24 小时每小时收件量曲线"
+        data-chart
+      >
+        <defs>
+          <linearGradient id="chart-area-gradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.32" />
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
+          </linearGradient>
+        </defs>
+
+        {# baseline grid lines at 0%, 50%, 100% of inner height #}
+        {% set inner_h = delivery_chart.baseline_y - delivery_chart.pad_top %}
+        <line class="chart-grid" x1="0" x2="{{ delivery_chart.view_width }}" y1="{{ delivery_chart.pad_top }}" y2="{{ delivery_chart.pad_top }}" />
+        <line class="chart-grid" x1="0" x2="{{ delivery_chart.view_width }}" y1="{{ delivery_chart.pad_top + inner_h / 2 }}" y2="{{ delivery_chart.pad_top + inner_h / 2 }}" />
+        <line class="chart-grid" x1="0" x2="{{ delivery_chart.view_width }}" y1="{{ delivery_chart.baseline_y }}" y2="{{ delivery_chart.baseline_y }}" />
+
+        {% if delivery_chart.area_path %}
+          <path class="chart-area" d="{{ delivery_chart.area_path }}" />
+          <path class="chart-line" d="{{ delivery_chart.line_path }}" />
+        {% endif %}
+
+        {# x-axis tick labels #}
+        {% for tick in delivery_chart.ticks %}
+          <text class="chart-axis" x="{{ tick.x }}" y="{{ delivery_chart.view_height - 8 }}" text-anchor="middle">{{ tick.label }}</text>
+        {% endfor %}
+
+        {# y-axis peak label (top-left) #}
+        {% if delivery_chart.peak > 0 %}
+          <text class="chart-axis" x="6" y="{{ delivery_chart.pad_top + 4 }}" text-anchor="start">{{ delivery_chart.peak }}</text>
+          <text class="chart-axis" x="6" y="{{ delivery_chart.baseline_y - 4 }}" text-anchor="start">0</text>
+        {% endif %}
+
+        {# Hover targets + dots: one transparent rect per bucket for clean tooltips #}
+        {% for bucket in delivery_chart.buckets %}
+          {% set hot_w = (delivery_chart.view_width - 48) / (delivery_chart.buckets | length) %}
+          <g
+            data-chart-point
+            data-x="{{ bucket.x }}"
+            data-y="{{ bucket.y }}"
+            data-hour="{{ '%02d' % bucket.hour }}:00"
+            data-value="{{ bucket.value }}"
+          >
+            <rect
+              class="chart-hot"
+              x="{{ bucket.x - hot_w / 2 }}"
+              y="{{ delivery_chart.pad_top }}"
+              width="{{ hot_w }}"
+              height="{{ inner_h }}"
+            />
+            <circle class="chart-dot" cx="{{ bucket.x }}" cy="{{ bucket.y }}" r="3.5" />
+          </g>
+        {% endfor %}
+      </svg>
+    </div>
+  </div>
+</section>
+
 <section class="dash-section" aria-labelledby="dash-today-title">
   <div class="dash-section__head">
     <h2 class="dash-section__title" id="dash-today-title">处理健康</h2>
@@ -376,4 +590,40 @@
     {% endfor %}
   </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const chart = document.querySelector('[data-chart]');
+    const tooltip = document.querySelector('[data-chart-tooltip]');
+    if (!chart || !tooltip) return;
+
+    const points = Array.from(chart.querySelectorAll('[data-chart-point]'));
+    const viewWidth = parseFloat(chart.viewBox.baseVal.width) || 1000;
+    const viewHeight = parseFloat(chart.viewBox.baseVal.height) || 240;
+
+    const showTooltip = (point) => {
+      const x = parseFloat(point.dataset.x);
+      const y = parseFloat(point.dataset.y);
+      const rect = chart.getBoundingClientRect();
+      const cardRect = chart.parentElement.getBoundingClientRect();
+      const px = (x / viewWidth) * rect.width + (rect.left - cardRect.left);
+      const py = (y / viewHeight) * rect.height + (rect.top - cardRect.top);
+      tooltip.textContent = `${point.dataset.hour} · ${point.dataset.value} 封`;
+      tooltip.style.left = `${px}px`;
+      tooltip.style.top = `${py}px`;
+      tooltip.classList.add('is-visible');
+    };
+    const hideTooltip = () => tooltip.classList.remove('is-visible');
+
+    for (const point of points) {
+      point.addEventListener('mouseenter', () => showTooltip(point));
+      point.addEventListener('mouseleave', hideTooltip);
+      point.addEventListener('focus', () => showTooltip(point));
+      point.addEventListener('blur', hideTooltip);
+    }
+    chart.addEventListener('mouseleave', hideTooltip);
+  })();
+</script>
 {% endblock %}

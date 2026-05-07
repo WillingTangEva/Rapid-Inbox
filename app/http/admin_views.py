@@ -286,6 +286,112 @@ async def _log_admin_audit(
         return
 
 
+def _delivery_chart(connection: sqlite3.Connection, *, hours: int = 24) -> dict[str, Any]:
+    """Build a per-hour delivery histogram for the last ``hours`` hours.
+
+    Returns a structure shaped for SVG curve rendering, with the buckets ordered
+    chronologically (oldest → newest). Empty hours are filled with zero so the
+    timeline stays continuous.
+    """
+
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    buckets: list[dict[str, Any]] = []
+    bucket_index: dict[str, int] = {}
+    for offset in range(hours - 1, -1, -1):
+        ts = now - timedelta(hours=offset)
+        key = ts.strftime("%Y-%m-%dT%H:00:00Z")
+        bucket_index[key] = len(buckets)
+        buckets.append({"ts": key, "hour": ts.hour, "value": 0})
+
+    cutoff = (now - timedelta(hours=hours - 1)).strftime("%Y-%m-%dT%H:00:00Z")
+    rows = connection.execute(
+        """
+        SELECT
+            substr(delivered_at, 1, 13) || ':00:00Z' AS bucket,
+            COUNT(*) AS count
+        FROM message_deliveries
+        WHERE delivered_at >= ? AND status = 'active'
+        GROUP BY bucket
+        """,
+        (cutoff,),
+    ).fetchall()
+    for row in rows:
+        idx = bucket_index.get(row["bucket"])
+        if idx is not None:
+            buckets[idx]["value"] = int(row["count"])
+
+    values = [item["value"] for item in buckets]
+    peak = max(values) if values else 0
+    total = sum(values)
+
+    # Build smooth-curve SVG path data on a fixed 1000x240 viewBox so the chart
+    # scales fluidly. We use a Catmull-Rom→cubic-Bézier approximation for a
+    # natural "curve" feel without depending on any client library.
+    width = 1000.0
+    height = 240.0
+    pad_x = 24.0
+    pad_top = 18.0
+    pad_bottom = 30.0
+    inner_w = width - pad_x * 2
+    inner_h = height - pad_top - pad_bottom
+    n = len(buckets)
+    y_scale_max = max(peak, 1)
+
+    coords: list[tuple[float, float]] = []
+    for index, item in enumerate(buckets):
+        x = pad_x + (index / max(n - 1, 1)) * inner_w
+        y = pad_top + inner_h - (item["value"] / y_scale_max) * inner_h
+        coords.append((x, y))
+        item["x"] = round(x, 2)
+        item["y"] = round(y, 2)
+
+    def _segment(p0, p1, p2, p3) -> str:
+        # Catmull-Rom to cubic Bézier conversion (tension = 0.5).
+        c1x = p1[0] + (p2[0] - p0[0]) / 6
+        c1y = p1[1] + (p2[1] - p0[1]) / 6
+        c2x = p2[0] - (p3[0] - p1[0]) / 6
+        c2y = p2[1] - (p3[1] - p1[1]) / 6
+        return f"C {c1x:.2f} {c1y:.2f}, {c2x:.2f} {c2y:.2f}, {p2[0]:.2f} {p2[1]:.2f}"
+
+    if coords:
+        path_parts = [f"M {coords[0][0]:.2f} {coords[0][1]:.2f}"]
+        for index in range(len(coords) - 1):
+            p0 = coords[index - 1] if index > 0 else coords[index]
+            p1 = coords[index]
+            p2 = coords[index + 1]
+            p3 = coords[index + 2] if index + 2 < len(coords) else p2
+            path_parts.append(_segment(p0, p1, p2, p3))
+        line_path = " ".join(path_parts)
+        baseline = pad_top + inner_h
+        area_path = (
+            f"{line_path} L {coords[-1][0]:.2f} {baseline:.2f}"
+            f" L {coords[0][0]:.2f} {baseline:.2f} Z"
+        )
+    else:
+        line_path = ""
+        area_path = ""
+
+    # Reduce x-axis labels to 5 evenly-spaced tick marks for readability.
+    tick_indices = sorted({0, n // 4, n // 2, (3 * n) // 4, n - 1}) if n else []
+    ticks = [
+        {"x": buckets[i]["x"], "label": f"{buckets[i]['hour']:02d}:00"}
+        for i in tick_indices
+    ]
+
+    return {
+        "buckets": buckets,
+        "peak": peak,
+        "total": total,
+        "line_path": line_path,
+        "area_path": area_path,
+        "ticks": ticks,
+        "view_width": int(width),
+        "view_height": int(height),
+        "baseline_y": round(pad_top + inner_h, 2),
+        "pad_top": pad_top,
+    }
+
+
 def _dashboard_stats(request: Request) -> dict[str, Any]:
     runtime = request.app.state.runtime
     one_minute_cutoff = _utc_cutoff(60)
@@ -357,6 +463,7 @@ def _dashboard_stats(request: Request) -> dict[str, Any]:
                 """
             ).fetchall()
         ]
+        delivery_chart = _delivery_chart(connection, hours=24)
 
     sessions_value = stats["active_connections"] or stats["open_sessions"]
     disk_threshold = runtime.settings.disk_warning_threshold_percent
@@ -433,6 +540,7 @@ def _dashboard_stats(request: Request) -> dict[str, Any]:
         ],
         "recent_domains": recent_domains,
         "recent_messages": recent_messages,
+        "delivery_chart": delivery_chart,
     }
 
 
