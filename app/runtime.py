@@ -804,6 +804,10 @@ class RapidInboxRuntime:
         session_id: str,
         *,
         status: str = "closed",
+        remote_ip: str = "unknown",
+        remote_port: int | None = None,
+        helo_name: str | None = None,
+        tls_used: bool = False,
         close_reason: str | None = None,
         result_code: int | None = None,
         result_message: str | None = None,
@@ -814,15 +818,47 @@ class RapidInboxRuntime:
         now = utc_now()
 
         def operation(connection: sqlite3.Connection) -> None:
-            self._update_smtp_session_summary(
-                connection,
-                session_id,
-                now,
-                status=status,
-                disconnect_at=now,
-                close_reason=close_reason,
-                result_code=result_code,
-                result_message=result_message,
+            connection.execute(
+                """
+                INSERT INTO smtp_sessions (
+                    id,
+                    remote_ip,
+                    remote_port,
+                    helo_name,
+                    status,
+                    tls_used,
+                    connect_at,
+                    first_command_at,
+                    last_command_at,
+                    disconnect_at,
+                    close_reason,
+                    result_code,
+                    result_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    first_command_at = COALESCE(smtp_sessions.first_command_at, excluded.first_command_at),
+                    last_command_at = excluded.last_command_at,
+                    status = excluded.status,
+                    disconnect_at = COALESCE(smtp_sessions.disconnect_at, excluded.disconnect_at),
+                    close_reason = COALESCE(smtp_sessions.close_reason, excluded.close_reason),
+                    result_code = COALESCE(smtp_sessions.result_code, excluded.result_code),
+                    result_message = COALESCE(smtp_sessions.result_message, excluded.result_message)
+                """,
+                (
+                    session_id,
+                    remote_ip,
+                    remote_port,
+                    helo_name,
+                    status,
+                    int(tls_used),
+                    now,
+                    now,
+                    now,
+                    now,
+                    close_reason,
+                    result_code,
+                    result_message,
+                ),
             )
 
         await self.writer.execute(operation)

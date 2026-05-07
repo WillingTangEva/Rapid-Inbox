@@ -177,6 +177,50 @@ async def test_smtp_handler_schedules_transport_close_after_successful_data(
 
 
 @pytest.mark.asyncio
+async def test_smtp_disconnect_close_wins_if_session_row_is_created_late(tmp_path) -> None:
+    settings = default_settings(tmp_path)
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+
+    await runtime.start()
+    try:
+        session = SimpleNamespace(
+            rapid_inbox_session_id="smtp_disconnect_race",
+            peer=("127.0.0.1", 2525),
+            host_name="mx1.test",
+            ssl=None,
+        )
+        envelope = SimpleNamespace(rcpt_tos=[], mail_from=None, content=b"")
+
+        allowed, reason = await runtime.register_smtp_connection("smtp_disconnect_race", "127.0.0.1")
+        assert allowed is True
+        assert reason is None
+
+        await handler.handle_DISCONNECT(None, session, envelope, None)
+        await runtime.ensure_smtp_session(
+            "smtp_disconnect_race",
+            session,
+            last_rcpt_to="late@example.com",
+        )
+
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT status, disconnect_at, close_reason, last_rcpt_to_sample
+                FROM smtp_sessions
+                WHERE id = 'smtp_disconnect_race'
+                """
+            ).fetchone()
+
+        assert row["status"] == "closed"
+        assert row["disconnect_at"] is not None
+        assert row["close_reason"] == "connection lost"
+        assert row["last_rcpt_to_sample"] == "late@example.com"
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_smtp_handler_persists_connect_and_disconnect_events(tmp_path) -> None:
     settings = default_settings(tmp_path)
     runtime = RapidInboxRuntime(settings)

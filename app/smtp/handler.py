@@ -176,9 +176,14 @@ class RapidInboxHandler:
         close_reason = "connection lost"
         if error is not None:
             close_reason = f"connection lost: {error.__class__.__name__}"
+        peer = getattr(session, "peer", None) or ("unknown", None)
         closed = await self.runtime.close_lost_smtp_session(
             session_id,
             status=status,
+            remote_ip=peer[0] or "unknown",
+            remote_port=peer[1],
+            helo_name=getattr(session, "host_name", None),
+            tls_used=bool(getattr(session, "ssl", None)),
             close_reason=close_reason,
         )
         if not closed:
