@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-PRODUCT_NAME = "极速收件箱"
-ADMIN_PRODUCT_NAME = "极速收件箱管理台"
+PRODUCT_NAME = "Rapid Inbox"
+ADMIN_PRODUCT_NAME = "Rapid Inbox"
 SHANGHAI_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 _ADMIN_ROLE_LABELS = {

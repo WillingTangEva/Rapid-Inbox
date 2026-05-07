@@ -1,14 +1,8 @@
 {% extends "public/base.html" %}
 
 {% block head %}
-<meta name="rapid-inbox-public-copy" content="重新定义公开邮箱" />
-
-<link href="{{ url_for('static', path='vendor/aos/aos.css') }}" rel="stylesheet" />
-<script src="{{ url_for('static', path='vendor/aos/aos.js') }}" defer></script>
-<script src="{{ url_for('static', path='vendor/typed/typed.umd.js') }}" defer></script>
-
 <style>
-  /* ==================== Page-shell override (full bleed) ==================== */
+  /* ========== Page-shell override (full bleed) ========== */
   body .page-main { padding-bottom: 0; }
   body .page-shell {
     width: 100%;
@@ -16,619 +10,418 @@
     padding: 0;
   }
 
-  .hh-shell {
-    width: min(1140px, calc(100% - 36px));
-    margin: 0 auto;
-  }
-  .hh-shell--narrow {
-    width: min(880px, calc(100% - 36px));
+  .home-shell {
+    width: min(1120px, calc(100% - 40px));
     margin: 0 auto;
   }
 
-  /* ==================== HERO ==================== */
-  .hh-hero {
+  .home-shell--narrow {
+    width: min(860px, calc(100% - 40px));
+    margin: 0 auto;
+  }
+
+  /* ========== Reveal on scroll (pure CSS) ========== */
+  .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    transition-delay: var(--reveal-delay, 0ms);
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+  }
+
+  /* ========== HERO ========== */
+  .hero {
     position: relative;
-    padding: 100px 0 90px;
+    padding: 96px 0 88px;
     overflow: hidden;
-    background:
-      radial-gradient(ellipse at 18% -12%, rgba(193, 95, 60, 0.18) 0%, transparent 50%),
-      radial-gradient(ellipse at 82% 16%, rgba(74, 107, 128, 0.12) 0%, transparent 55%),
-      radial-gradient(ellipse at 50% 110%, rgba(217, 119, 87, 0.08) 0%, transparent 60%);
   }
-
-  /* dotted overlay */
-  .hh-hero::before {
+  .hero::before {
     content: '';
     position: absolute;
     inset: 0;
-    background-image: radial-gradient(circle, rgba(31, 30, 29, 0.07) 1px, transparent 1.4px);
-    background-size: 28px 28px;
-    mask-image: radial-gradient(ellipse at center 30%, black 0%, transparent 72%);
-    -webkit-mask-image: radial-gradient(ellipse at center 30%, black 0%, transparent 72%);
+    background:
+      radial-gradient(ellipse 70% 50% at 15% 0%, rgba(193, 95, 60, 0.14) 0%, transparent 65%),
+      radial-gradient(ellipse 50% 40% at 85% 20%, rgba(74, 107, 128, 0.10) 0%, transparent 65%);
     pointer-events: none;
-  }
-
-  .hh-blob {
-    position: absolute;
-    border-radius: 50%;
-    pointer-events: none;
-    filter: blur(80px);
-    opacity: 0.55;
     z-index: 0;
   }
-  .hh-blob--1 {
-    width: 360px;
-    height: 360px;
-    background: radial-gradient(circle, rgba(217, 119, 87, 0.45) 0%, transparent 70%);
-    top: -100px;
-    left: -100px;
-    animation: hhFloat 14s ease-in-out infinite;
-  }
-  .hh-blob--2 {
-    width: 320px;
-    height: 320px;
-    background: radial-gradient(circle, rgba(74, 107, 128, 0.32) 0%, transparent 70%);
-    top: 60px;
-    right: -80px;
-    animation: hhFloat 12s ease-in-out infinite reverse;
-  }
-  @keyframes hhFloat {
-    0%, 100% { transform: translate(0, 0); }
-    50% { transform: translate(28px, -22px); }
+  .hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(31, 30, 29, 0.06) 1px, transparent 1.4px);
+    background-size: 26px 26px;
+    mask-image: radial-gradient(ellipse at center 30%, #000 0%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at center 30%, #000 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
   }
 
-  .hh-hero-inner { position: relative; text-align: center; z-index: 1; }
+  .hero-inner {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+  }
 
-  /* live badge */
-  .hh-badge {
+  .hero-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     padding: 6px 14px;
     background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--border);
     border-radius: 999px;
+    color: var(--text-secondary);
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--text-secondary);
-    box-shadow: 0 2px 12px rgba(31, 30, 29, 0.04);
+    box-shadow: var(--shadow-xs);
   }
-  .hh-badge em { color: var(--accent-strong); font-style: normal; font-weight: 700; }
+  .hero-eyebrow strong { color: var(--accent-strong); font-weight: 700; }
 
-  .pulse-dot {
+  .live-pulse {
     position: relative;
     width: 8px;
     height: 8px;
-    flex-shrink: 0;
+    border-radius: 999px;
+    background: var(--success);
   }
-  .pulse-dot::before, .pulse-dot::after {
+  .live-pulse::after {
     content: '';
     position: absolute;
     inset: 0;
-    border-radius: 50%;
-    background: var(--success);
-  }
-  .pulse-dot::after {
-    animation: hhPing 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+    border-radius: inherit;
+    background: inherit;
     opacity: 0.55;
+    animation: homePing 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
-  @keyframes hhPing {
+  @keyframes homePing {
     75%, 100% { transform: scale(2.4); opacity: 0; }
   }
 
-  .hh-headline {
+  .hero-title {
     margin: 26px auto 0;
-    max-width: 18ch;
+    max-width: 20ch;
     font-family: var(--font-serif);
-    font-size: clamp(2.6rem, 6.2vw, 4.6rem);
-    line-height: 1.02;
-    letter-spacing: -0.03em;
+    font-size: clamp(2.4rem, 5.8vw, 4.2rem);
     font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
     color: var(--text);
   }
-  .hh-cycle {
-    display: inline-block;
-    min-height: 1em;
-    min-width: 4ch;
+  .hero-title em {
     font-style: italic;
     background: linear-gradient(95deg, #c15f3c 0%, #d97757 50%, #b14343 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-  }
-  .typed-cursor {
-    color: var(--accent);
-    -webkit-text-fill-color: var(--accent);
-    font-style: normal;
-    margin-left: 2px;
-    font-weight: 400;
+    color: var(--accent-strong);
   }
 
-  .hh-sub {
-    margin: 24px auto 0;
+  .hero-sub {
+    margin: 22px auto 0;
     max-width: 56ch;
     color: var(--text-secondary);
-    font-size: clamp(1rem, 1.5vw, 1.15rem);
+    font-size: clamp(1rem, 1.4vw, 1.12rem);
     line-height: 1.65;
   }
 
-  .hh-form {
-    margin: 40px auto 0;
-    max-width: 600px;
+  .hero-form {
+    margin: 36px auto 0;
+    max-width: 580px;
   }
-  .hh-input-shell {
+  .hero-input {
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr) auto;
+    grid-template-columns: 48px minmax(0, 1fr) auto;
     align-items: center;
+    padding: 6px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-strong);
-    border-radius: 18px;
-    padding: 6px;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 14px 40px rgba(31, 30, 29, 0.07);
+    border-radius: 16px;
+    box-shadow: 0 12px 32px rgba(31, 30, 29, 0.06);
     transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  .hh-input-shell:hover {
+  .hero-input:hover {
     transform: translateY(-1px);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 18px 50px rgba(31, 30, 29, 0.1);
+    box-shadow: 0 16px 40px rgba(31, 30, 29, 0.08);
   }
-  .hh-input-shell:focus-within {
+  .hero-input:focus-within {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(193, 95, 60, 0.16), 0 18px 40px rgba(31, 30, 29, 0.08);
+    box-shadow: 0 0 0 3px rgba(193, 95, 60, 0.18), 0 16px 40px rgba(31, 30, 29, 0.08);
   }
-  .hh-input-icon {
+  .hero-input__icon {
     display: inline-flex;
-    width: 48px;
-    height: 48px;
     align-items: center;
     justify-content: center;
+    width: 44px;
+    height: 44px;
     color: var(--accent-strong);
   }
-  .hh-input-shell input {
+  .hero-input input {
     width: 100%;
-    height: 56px;
+    height: 52px;
+    padding: 0 6px;
     border: 0;
     background: transparent;
     color: var(--text);
-    font-size: 1.08rem;
-    padding: 0 8px;
-    font-family: var(--font-sans);
+    font-size: 1.05rem;
   }
-  .hh-input-shell input::placeholder { color: var(--text-faint); }
-  .hh-input-shell input:focus { outline: none; box-shadow: none; }
-  .hh-submit {
-    height: 52px;
-    padding: 0 24px;
-    border-radius: 14px;
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    color: #fff;
-    font-weight: 600;
-    font-size: 1rem;
+  .hero-input input:focus { outline: none; box-shadow: none; border: 0; }
+  .hero-input input::placeholder { color: var(--text-faint); }
+  .hero-submit {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    transition: background 0.15s, transform 0.05s, box-shadow 0.15s;
-    box-shadow: 0 4px 14px rgba(193, 95, 60, 0.28);
-  }
-  .hh-submit:hover {
-    background: var(--accent-strong);
-    box-shadow: 0 6px 20px rgba(193, 95, 60, 0.36);
-  }
-  .hh-submit:active { transform: translateY(0.5px); }
-
-  .hh-form-foot {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    align-items: center;
-    gap: 10px 18px;
-    margin: 18px 0 0;
-    color: var(--text-muted);
-    font-size: 0.88rem;
-  }
-  .hh-shuffle {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border: 0;
-    background: transparent;
-    color: var(--text-secondary);
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .hh-shuffle:hover { color: var(--text); background: var(--bg-subtle); }
-  .hh-form-foot .sep { width: 1px; height: 14px; background: var(--border); }
-  .hh-form-foot a { color: var(--accent-strong); text-decoration: none; font-weight: 600; }
-  .hh-form-foot a:hover { color: var(--accent); }
-
-  .hh-stats {
-    display: flex;
-    justify-content: center;
-    gap: 64px;
-    margin: 64px auto 0;
-    flex-wrap: wrap;
-  }
-  .hh-stat { text-align: center; }
-  .hh-stat__value {
-    display: block;
-    font-family: var(--font-serif);
-    font-size: clamp(1.9rem, 3.2vw, 2.7rem);
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: -0.02em;
-    line-height: 1.1;
-  }
-  .hh-stat__label {
-    color: var(--text-muted);
-    font-size: 0.84rem;
-    margin-top: 4px;
-  }
-
-  /* ==================== LIVE DEMO ==================== */
-  .hh-demo {
-    padding: 110px 0 90px;
-    background: linear-gradient(180deg, transparent 0%, rgba(247, 236, 227, 0.5) 100%);
-    position: relative;
-    overflow: hidden;
-  }
-  .hh-section-eyebrow {
-    text-align: center;
-    margin: 0 0 14px;
-    color: var(--accent-strong);
-    font-size: 0.82rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-  .hh-section-title {
-    text-align: center;
-    margin: 0 auto 16px;
-    max-width: 28ch;
-    font-family: var(--font-serif);
-    font-size: clamp(1.9rem, 3.6vw, 2.7rem);
-    line-height: 1.16;
-    letter-spacing: -0.02em;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .hh-section-title em {
-    color: var(--accent-strong);
-    font-style: italic;
-    font-weight: 600;
-  }
-  .hh-section-sub {
-    text-align: center;
-    margin: 0 auto 56px;
-    max-width: 60ch;
-    color: var(--text-secondary);
-    font-size: 1rem;
-    line-height: 1.7;
-  }
-
-  .hh-browser {
-    max-width: 880px;
-    margin: 0 auto;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 22px;
-    overflow: hidden;
-    box-shadow:
-      0 30px 80px rgba(31, 30, 29, 0.14),
-      0 1px 0 rgba(255, 255, 255, 0.7) inset;
-  }
-  .hh-chrome {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 18px;
-    background: var(--bg-subtle);
-    border-bottom: 1px solid var(--border);
-  }
-  .hh-chrome__dots { display: flex; gap: 6px; }
-  .hh-chrome__dots span { width: 12px; height: 12px; border-radius: 50%; }
-  .hh-chrome__dots span:nth-child(1) { background: #ed6a5e; }
-  .hh-chrome__dots span:nth-child(2) { background: #f4bf4f; }
-  .hh-chrome__dots span:nth-child(3) { background: #61c554; }
-  .hh-chrome__url {
-    flex: 1;
-    padding: 6px 14px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hh-chrome__url strong { color: var(--text); font-weight: 500; }
-
-  .hh-mailbox { padding: 24px 28px; }
-  .hh-mailbox__head {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding-bottom: 18px;
-    border-bottom: 1px solid var(--border-faint);
-    margin-bottom: 14px;
-  }
-  .hh-mailbox__avatar {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent) 0%, #d97757 100%);
+    height: 50px;
+    padding: 0 22px;
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    background: var(--accent);
     color: #fff;
-    display: inline-flex;
-    align-items: center;
+    font-weight: 600;
+    font-size: 0.96rem;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(193, 95, 60, 0.28);
+    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+  }
+  .hero-submit:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    box-shadow: 0 6px 20px rgba(193, 95, 60, 0.34);
+  }
+  .hero-submit:active { transform: translateY(1px); }
+
+  .hero-helpers {
+    display: flex;
+    flex-wrap: wrap;
     justify-content: center;
-    font-family: var(--font-serif);
-    font-weight: 600;
-    font-size: 1.1rem;
-  }
-  .hh-mailbox__head h4 {
-    margin: 0;
-    font-family: var(--font-serif);
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .hh-mailbox__head p {
-    margin: 2px 0 0;
+    align-items: center;
+    gap: 10px 16px;
+    margin: 16px 0 0;
     color: var(--text-muted);
-    font-size: 0.84rem;
+    font-size: 0.86rem;
   }
-  .hh-mailbox__online {
-    margin-left: auto;
+  .hero-helpers .sep {
+    width: 1px;
+    height: 14px;
+    background: var(--border);
+  }
+  .hero-helpers a {
+    color: var(--accent-strong);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .hero-helpers a:hover { color: var(--accent); }
+  .hero-helpers__random {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    background: var(--success-soft);
-    color: var(--success-strong);
-    border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-  .hh-mailbox__online .pulse-dot { width: 7px; height: 7px; }
-
-  .hh-mail-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .hh-mail-row {
-    display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 10px;
-    border-radius: 12px;
-    transition: background 0.15s;
-    opacity: 0;
-    transform: translateY(10px);
-    animation: hhMailIn 0.6s ease-out forwards;
-  }
-  .hh-mail-row:nth-child(1) { animation-delay: 0.4s; }
-  .hh-mail-row:nth-child(2) { animation-delay: 1.1s; }
-  .hh-mail-row:nth-child(3) { animation-delay: 1.8s; }
-  .hh-mail-row:nth-child(4) { animation-delay: 2.5s; }
-  .hh-mail-row:nth-child(1) { background: var(--accent-faint); }
-  .hh-mail-row:hover { background: var(--bg-subtle); }
-  @keyframes hhMailIn {
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .hh-mail__icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 9px;
-    background: var(--bg-subtle);
+    background: transparent;
+    border: 0;
     color: var(--text-secondary);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-serif);
-    font-weight: 600;
-    font-size: 0.9rem;
-  }
-  .hh-mail__icon--gh { background: #1f1e1d; color: #fff; }
-  .hh-mail__icon--st { background: #635bff; color: #fff; }
-  .hh-mail__icon--no { background: #fff; color: #1f1e1d; border: 1px solid var(--border); }
-  .hh-mail__icon--ln { background: #5e6ad2; color: #fff; }
-  .hh-mail__body { min-width: 0; }
-  .hh-mail__subject {
-    color: var(--text);
-    font-weight: 600;
-    font-size: 0.94rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hh-mail__from {
-    color: var(--text-muted);
-    font-size: 0.82rem;
-    margin-top: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .hh-mail__code {
-    padding: 6px 12px;
-    background: var(--bg-deep);
-    color: #fff;
+    font-weight: 500;
     border-radius: 8px;
-    font-family: var(--font-mono);
+    cursor: pointer;
+  }
+  .hero-helpers__random:hover { background: var(--bg-subtle); color: var(--text); }
+
+  .hero-stats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 44px;
+    margin: 56px auto 0;
+  }
+  .hero-stat { text-align: center; min-width: 120px; }
+  .hero-stat__value {
+    display: block;
+    font-family: var(--font-serif);
+    font-size: clamp(1.7rem, 3vw, 2.4rem);
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .hero-stat__label {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 0.84rem;
+  }
+
+  /* ========== Section primitives ========== */
+  .section { padding: 88px 0; }
+  .section--tinted {
+    background: linear-gradient(180deg, transparent 0%, rgba(247, 236, 227, 0.4) 100%);
+    border-top: 1px solid var(--border-faint);
+    border-bottom: 1px solid var(--border-faint);
+  }
+  .section-head {
+    max-width: 640px;
+    margin: 0 auto 48px;
+    text-align: center;
+  }
+  .section-eyebrow {
+    margin: 0 0 12px;
+    color: var(--accent-strong);
+    font-size: 0.78rem;
     font-weight: 700;
-    font-size: 0.96rem;
-    letter-spacing: 0.06em;
-    flex-shrink: 0;
-    box-shadow: 0 4px 12px rgba(31, 30, 29, 0.12);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
-  .hh-mail__code--accent {
-    background: linear-gradient(135deg, var(--accent) 0%, #d97757 100%);
-    box-shadow: 0 4px 14px rgba(193, 95, 60, 0.32);
-    animation: hhCodeGlow 2s ease-in-out infinite;
+  .section-title {
+    margin: 0 0 14px;
+    font-family: var(--font-serif);
+    font-size: clamp(1.7rem, 3.2vw, 2.3rem);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--text);
   }
-  @keyframes hhCodeGlow {
-    0%, 100% { box-shadow: 0 4px 14px rgba(193, 95, 60, 0.32); }
-    50% { box-shadow: 0 6px 22px rgba(193, 95, 60, 0.5); }
+  .section-sub {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1.7;
   }
 
-  /* ==================== FEATURES ==================== */
-  .hh-features-section { padding: 110px 0 90px; }
-
-  .hh-features {
+  /* ========== FEATURES ========== */
+  .feature-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 22px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
   }
-  .hh-feature {
-    padding: 32px 28px;
+  .feature-card {
+    display: grid;
+    gap: 14px;
+    padding: 30px 26px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 18px;
-    position: relative;
-    overflow: hidden;
-    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    border-radius: 16px;
+    box-shadow: var(--shadow-xs);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  .hh-feature:hover {
+  .feature-card:hover {
     border-color: var(--accent);
-    transform: translateY(-4px);
-    box-shadow: 0 18px 40px rgba(31, 30, 29, 0.08);
+    box-shadow: 0 14px 32px rgba(31, 30, 29, 0.08);
+    transform: translateY(-3px);
   }
-  .hh-feature::before {
-    content: '';
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--accent), #d97757);
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-  .hh-feature:hover::before { opacity: 1; }
-  .hh-feature__icon {
-    width: 52px;
-    height: 52px;
-    border-radius: 13px;
-    background: linear-gradient(135deg, var(--accent-soft) 0%, var(--accent-faint) 100%);
-    color: var(--accent-strong);
+  .feature-card__icon {
     display: inline-flex;
+    width: 48px;
+    height: 48px;
     align-items: center;
     justify-content: center;
-    margin-bottom: 18px;
-    box-shadow: 0 4px 14px rgba(193, 95, 60, 0.16);
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent-soft) 0%, var(--accent-faint) 100%);
+    color: var(--accent-strong);
   }
-  .hh-feature h3 {
-    margin: 0 0 10px;
+  .feature-card h3 {
+    margin: 0;
     font-family: var(--font-serif);
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     font-weight: 600;
     color: var(--text);
   }
-  .hh-feature p {
+  .feature-card p {
     margin: 0;
     color: var(--text-secondary);
     font-size: 0.94rem;
     line-height: 1.7;
   }
 
-  /* ==================== USE CASES ==================== */
-  .hh-cases {
-    padding: 110px 0 90px;
-    background: var(--bg-subtle);
-    border-top: 1px solid var(--border-faint);
-    border-bottom: 1px solid var(--border-faint);
-  }
-  .hh-cases-grid {
+  /* ========== USE CASES ========== */
+  .case-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .case-card {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
     gap: 16px;
-  }
-  .hh-case {
-    display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
-    gap: 18px;
-    padding: 24px 26px;
+    padding: 22px 24px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 14px;
-    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
   }
-  .hh-case:hover {
+  .case-card:hover {
     border-color: var(--accent);
+    box-shadow: var(--shadow-sm);
     transform: translateY(-2px);
-    box-shadow: 0 12px 30px rgba(31, 30, 29, 0.06);
   }
-  .hh-case__icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    background: var(--accent-soft);
-    color: var(--accent-strong);
+  .case-card__icon {
     display: inline-flex;
+    width: 44px;
+    height: 44px;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
+    border-radius: 11px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
   }
-  .hh-case h4 {
-    margin: 0 0 6px;
+  .case-card h4 {
+    margin: 0 0 4px;
     font-family: var(--font-serif);
-    font-size: 1.08rem;
+    font-size: 1.05rem;
     font-weight: 600;
     color: var(--text);
   }
-  .hh-case p {
+  .case-card p {
     margin: 0;
     color: var(--text-muted);
     font-size: 0.88rem;
     line-height: 1.6;
   }
 
-  /* ==================== API TABS ==================== */
-  .hh-api { padding: 110px 0 90px; }
-  .hh-tabs {
-    max-width: 880px;
+  /* ========== API TABS ========== */
+  .code-card {
+    max-width: 860px;
     margin: 0 auto;
     background: #1c1b19;
     border-radius: 18px;
     overflow: hidden;
-    box-shadow: 0 24px 60px rgba(31, 30, 29, 0.18);
+    box-shadow: 0 24px 60px rgba(31, 30, 29, 0.2);
   }
-  .hh-tabbar {
+  .code-tabbar {
     display: flex;
+    gap: 4px;
+    padding: 0 8px;
     background: #232220;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 0 8px;
+    overflow-x: auto;
   }
-  .hh-tabbar__tab {
-    padding: 14px 20px;
-    background: transparent;
+  .code-tab {
+    padding: 14px 18px;
     border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
     color: rgba(255, 255, 255, 0.55);
     font-family: var(--font-mono);
     font-size: 0.86rem;
     font-weight: 500;
     cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    transition: color 0.15s ease, border-color 0.15s ease;
   }
-  .hh-tabbar__tab:hover { color: rgba(255, 255, 255, 0.88); }
-  .hh-tabbar__tab.is-active {
+  .code-tab:hover { color: rgba(255, 255, 255, 0.88); }
+  .code-tab[aria-selected="true"] {
     color: #d97757;
     border-bottom-color: #d97757;
   }
-  .hh-pane { display: none; }
-  .hh-pane.is-active { display: block; }
-  .hh-pane pre {
+  .code-pane { display: none; }
+  .code-pane.is-active { display: block; }
+  .code-pane pre {
     margin: 0;
-    padding: 24px 28px;
+    padding: 24px 26px;
     color: #ebe7d8;
     font-family: var(--font-mono);
     font-size: 0.88rem;
@@ -642,214 +435,161 @@
   .tk-key { color: #e6c990; }
   .tk-fn { color: #b09bcf; }
 
-  /* ==================== TESTIMONIAL ==================== */
-  .hh-quote {
-    padding: 80px 0;
-  }
-  .hh-quote-card {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 44px 40px;
-    text-align: center;
-    border-radius: 24px;
-    background:
-      radial-gradient(circle at top right, rgba(217, 119, 87, 0.16) 0%, transparent 60%),
-      var(--bg-elevated);
-    border: 1px solid var(--border);
-    position: relative;
-    overflow: hidden;
-  }
-  .hh-quote-card::before {
-    content: '"';
-    position: absolute;
-    top: 8px;
-    left: 24px;
-    font-family: var(--font-serif);
-    font-size: 7rem;
-    line-height: 1;
-    color: var(--accent-soft);
-    pointer-events: none;
-  }
-  .hh-quote-card q {
-    quotes: '"' '"';
-    font-family: var(--font-serif);
-    font-style: italic;
-    font-size: clamp(1.3rem, 2.4vw, 1.75rem);
-    line-height: 1.5;
-    color: var(--text);
-    font-weight: 500;
-    position: relative;
-  }
-  .hh-quote-card .quote-foot {
-    margin-top: 22px;
-    color: var(--text-muted);
-    font-size: 0.88rem;
-  }
-
-  /* ==================== FAQ ==================== */
-  .hh-faq {
-    padding: 110px 0 90px;
-    background: linear-gradient(180deg, var(--bg-subtle) 0%, transparent 100%);
-  }
-  .hh-faq-list {
+  /* ========== FAQ ========== */
+  .faq-list {
     max-width: 720px;
     margin: 0 auto;
   }
-  .hh-faq-item {
+  .faq-item {
     border-bottom: 1px solid var(--border);
-    padding: 6px 0;
+    padding: 4px 0;
   }
-  .hh-faq-item summary {
-    cursor: pointer;
-    list-style: none;
+  .faq-item summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     padding: 18px 4px;
-    font-family: var(--font-serif);
-    font-size: 1.1rem;
-    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
     color: var(--text);
-    transition: color 0.15s;
+    font-family: var(--font-serif);
+    font-size: 1.08rem;
+    font-weight: 600;
+    transition: color 0.15s ease;
   }
-  .hh-faq-item summary::-webkit-details-marker { display: none; }
-  .hh-faq-item summary::after {
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-item summary::after {
     content: '';
-    width: 14px;
-    height: 14px;
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
     border-right: 2px solid var(--text-muted);
     border-bottom: 2px solid var(--text-muted);
     transform: rotate(45deg);
-    transition: transform 0.2s, border-color 0.2s;
-    flex-shrink: 0;
+    transition: transform 0.2s ease, border-color 0.2s ease;
   }
-  .hh-faq-item[open] summary::after {
+  .faq-item[open] summary::after {
     transform: rotate(225deg);
     border-color: var(--accent-strong);
   }
-  .hh-faq-item summary:hover { color: var(--accent-strong); }
-  .hh-faq-item p {
+  .faq-item summary:hover { color: var(--accent-strong); }
+  .faq-item p {
     margin: 0 4px 18px;
     color: var(--text-secondary);
     font-size: 0.94rem;
     line-height: 1.7;
   }
 
-  /* ==================== ROUTES ==================== */
-  .hh-routes { padding: 0 0 110px; }
-  .hh-routes-card {
+  /* ========== ROUTES ========== */
+  .route-card {
     max-width: 760px;
     margin: 0 auto;
-    padding: 32px 34px;
+    padding: 28px 30px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 18px;
-    box-shadow: 0 4px 14px rgba(31, 30, 29, 0.04);
+    border-radius: 16px;
+    box-shadow: var(--shadow-xs);
   }
-  .hh-routes-card h2 {
+  .route-card h2 {
     margin: 0 0 4px;
     font-family: var(--font-serif);
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     font-weight: 600;
   }
-  .hh-routes-card p {
+  .route-card p {
     margin: 0 0 18px;
     color: var(--text-muted);
     font-size: 0.9rem;
   }
-  .hh-route-list {
+  .route-list {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
     gap: 8px;
   }
-  .hh-route-list li {
+  .route-list li {
     display: grid;
     grid-template-columns: 64px minmax(0, 1fr);
     align-items: center;
     gap: 14px;
     padding: 12px 14px;
     background: var(--bg-subtle);
-    border-radius: 10px;
     border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow-x: auto;
   }
-  .hh-route__method {
+  .route-method {
     display: inline-flex;
     justify-content: center;
+    padding: 3px 0;
     background: var(--accent-soft);
     color: var(--accent-strong);
     border-radius: 5px;
-    padding: 3px 0;
     font-family: var(--font-mono);
-    font-weight: 700;
     font-size: 0.78rem;
+    font-weight: 700;
   }
-  .hh-route-list code {
+  .route-list code {
     font-family: var(--font-mono);
     font-size: 0.86rem;
     color: var(--text);
-    overflow-x: auto;
+    overflow-wrap: anywhere;
   }
 
-  /* ==================== Responsive ==================== */
-  @media (max-width: 1100px) {
-    .hh-features { grid-template-columns: 1fr 1fr; }
-    .hh-features > :nth-child(3) { grid-column: span 2; }
+  /* ========== Responsive ========== */
+  @media (max-width: 1000px) {
+    .feature-grid { grid-template-columns: 1fr 1fr; }
+    .feature-grid > :nth-child(3) { grid-column: span 2; }
   }
-  @media (max-width: 880px) {
-    .hh-hero { padding: 80px 0 70px; }
-    .hh-stats { gap: 36px; margin-top: 44px; }
-    .hh-features, .hh-features > :nth-child(3) { grid-template-columns: 1fr; grid-column: auto; }
-    .hh-cases-grid { grid-template-columns: 1fr; }
-    .hh-tabbar { overflow-x: auto; }
-    .hh-tabbar__tab { white-space: nowrap; }
+  @media (max-width: 720px) {
+    .hero { padding: 72px 0 64px; }
+    .section { padding: 72px 0; }
+    .section-head { margin-bottom: 40px; }
+    .feature-grid,
+    .feature-grid > :nth-child(3) {
+      grid-template-columns: 1fr;
+      grid-column: auto;
+    }
+    .case-grid { grid-template-columns: 1fr; }
+    .hero-stats { gap: 28px; margin-top: 40px; }
   }
-  @media (max-width: 560px) {
-    .hh-input-shell { grid-template-columns: 48px minmax(0, 1fr); padding: 8px; }
-    .hh-submit {
+  @media (max-width: 540px) {
+    .hero-input { grid-template-columns: 42px minmax(0, 1fr); padding: 8px; }
+    .hero-submit {
       grid-column: 1 / -1;
       width: 100%;
       justify-content: center;
-      margin-top: 6px;
+      margin-top: 8px;
     }
-    .hh-stats { gap: 28px; }
-    .hh-quote-card { padding: 36px 22px; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .hh-blob, .pulse-dot::after, .hh-mail__code--accent { animation: none !important; }
-    .hh-mail-row { opacity: 1 !important; transform: none !important; animation: none !important; }
   }
 </style>
 {% endblock %}
 
 {% block content %}
-<!-- ==================== HERO ==================== -->
-<section class="hh-hero">
-  <span class="hh-blob hh-blob--1" aria-hidden="true"></span>
-  <span class="hh-blob hh-blob--2" aria-hidden="true"></span>
-
-  <div class="hh-shell hh-hero-inner">
-    <span class="hh-badge" data-aos="fade-down">
-      <span class="pulse-dot" aria-hidden="true"></span>
-      实时收件中 · 已为 <em>10,247</em> 个邮箱投递
+<!-- ========== HERO ========== -->
+<section class="hero">
+  <div class="home-shell hero-inner">
+    <span class="hero-eyebrow reveal">
+      <span class="live-pulse" aria-hidden="true"></span>
+      实时收件中 · 公开访问 · 零注册
     </span>
 
-    <h1 class="hh-headline" id="public-mailbox-title" data-aos="fade-up" data-aos-delay="100">
+    <h1 class="hero-title reveal" style="--reveal-delay: 60ms;">
       重新定义你与<br />
-      <span class="hh-cycle" id="cycle">公开邮箱</span>的距离。
+      <em>公开邮箱</em>的距离。
     </h1>
 
-    <p class="hh-sub" data-aos="fade-up" data-aos-delay="200">
+    <p class="hero-sub reveal" style="--reveal-delay: 120ms;">
       输入任意已接入域名下的邮箱地址，立即查看邮件、附件与验证码。零注册、零订阅，专为开发与测试场景而生。
     </p>
 
-    <form class="hh-form" id="mailbox-form" novalidate data-aos="fade-up" data-aos-delay="300">
+    <form class="hero-form reveal" id="mailbox-form" novalidate style="--reveal-delay: 180ms;">
       <label class="sr-only" for="mailbox-address">邮箱地址</label>
-      <div class="hh-input-shell">
-        <span class="hh-input-icon" aria-hidden="true">
-          <i data-lucide="at-sign" style="width: 22px; height: 22px;"></i>
+      <div class="hero-input">
+        <span class="hero-input__icon" aria-hidden="true">
+          <i data-lucide="at-sign" style="width: 20px; height: 20px;"></i>
         </span>
         <input
           type="email"
@@ -859,14 +599,15 @@
           autocomplete="email"
           required
         />
-        <button type="submit" class="hh-submit">
+        <button type="submit" class="hero-submit">
           立即进入
           <i data-lucide="arrow-right" style="width: 16px; height: 16px;"></i>
         </button>
       </div>
-      <div class="hh-form-foot">
-        <button type="button" class="hh-shuffle" id="btn-random">
-          <i data-lucide="shuffle" style="width: 14px; height: 14px;"></i>生成随机邮箱
+      <div class="hero-helpers">
+        <button type="button" class="hero-helpers__random" id="btn-random">
+          <i data-lucide="shuffle" style="width: 14px; height: 14px;"></i>
+          生成随机邮箱
         </button>
         <span class="sep" aria-hidden="true"></span>
         <span>试试看：</span>
@@ -874,280 +615,193 @@
       </div>
     </form>
 
-    <div class="hh-stats" data-aos="fade-up" data-aos-delay="400">
-      <div class="hh-stat">
-        <span class="hh-stat__value" data-counter="42">0</span>
-        <span class="hh-stat__label">已接入域名</span>
+    <div class="hero-stats reveal" style="--reveal-delay: 240ms;">
+      <div class="hero-stat">
+        <span class="hero-stat__value" data-counter="42">0</span>
+        <span class="hero-stat__label">已接入域名</span>
       </div>
-      <div class="hh-stat">
-        <span class="hh-stat__value" data-counter="10247">0</span>
-        <span class="hh-stat__label">已投递邮件</span>
+      <div class="hero-stat">
+        <span class="hero-stat__value" data-counter="10247">0</span>
+        <span class="hero-stat__label">已投递邮件</span>
       </div>
-      <div class="hh-stat">
-        <span class="hh-stat__value" data-counter="100">0</span>
-        <span class="hh-stat__label">% 公开访问</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ==================== LIVE DEMO ==================== -->
-<section class="hh-demo">
-  <div class="hh-shell">
-    <p class="hh-section-eyebrow" data-aos="fade-up">现场预览</p>
-    <h2 class="hh-section-title" data-aos="fade-up" data-aos-delay="50">
-      邮件抵达后，立即<em>在浏览器里活起来</em>
-    </h2>
-    <p class="hh-section-sub" data-aos="fade-up" data-aos-delay="100">
-      下面是一个真实的邮箱页面预览。新邮件会从顶部滑入列表，验证码会被自动识别并高亮。
-    </p>
-
-    <div data-aos="zoom-in" data-aos-delay="150">
-      <div class="hh-browser">
-        <div class="hh-chrome">
-          <div class="hh-chrome__dots"><span></span><span></span><span></span></div>
-          <div class="hh-chrome__url">
-            https://your-host<strong>/mail/dev@example.com</strong>
-          </div>
-        </div>
-        <div class="hh-mailbox">
-          <div class="hh-mailbox__head">
-            <span class="hh-mailbox__avatar">D</span>
-            <div>
-              <h4>dev@example.com</h4>
-              <p>实时连接 · 共 4 封邮件</p>
-            </div>
-            <span class="hh-mailbox__online">
-              <span class="pulse-dot" aria-hidden="true"></span>在线
-            </span>
-          </div>
-          <ul class="hh-mail-list" id="demo-mail-list">
-            <li class="hh-mail-row">
-              <span class="hh-mail__icon hh-mail__icon--gh">G</span>
-              <div class="hh-mail__body">
-                <div class="hh-mail__subject">您的 GitHub 验证码已发送</div>
-                <div class="hh-mail__from">noreply@github.com · 30 秒前</div>
-              </div>
-              <span class="hh-mail__code hh-mail__code--accent">482951</span>
-            </li>
-            <li class="hh-mail-row">
-              <span class="hh-mail__icon hh-mail__icon--st">S</span>
-              <div class="hh-mail__body">
-                <div class="hh-mail__subject">Stripe one-time login link</div>
-                <div class="hh-mail__from">support@stripe.com · 2 分钟前</div>
-              </div>
-              <span class="hh-mail__code">137254</span>
-            </li>
-            <li class="hh-mail-row">
-              <span class="hh-mail__icon hh-mail__icon--no">N</span>
-              <div class="hh-mail__body">
-                <div class="hh-mail__subject">[Notion] Confirm your email</div>
-                <div class="hh-mail__from">team@notion.so · 5 分钟前</div>
-              </div>
-              <span class="hh-mail__code">802146</span>
-            </li>
-            <li class="hh-mail-row">
-              <span class="hh-mail__icon hh-mail__icon--ln">L</span>
-              <div class="hh-mail__body">
-                <div class="hh-mail__subject">Welcome to the platform 🎉</div>
-                <div class="hh-mail__from">hello@linear.app · 7 分钟前</div>
-              </div>
-              <span class="hh-mail__code">059318</span>
-            </li>
-          </ul>
-        </div>
+      <div class="hero-stat">
+        <span class="hero-stat__value" data-counter="100">0</span>
+        <span class="hero-stat__label">% 公开访问</span>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ==================== FEATURES ==================== -->
-<section class="hh-features-section">
-  <div class="hh-shell">
-    <p class="hh-section-eyebrow" data-aos="fade-up">核心特性</p>
-    <h2 class="hh-section-title" data-aos="fade-up" data-aos-delay="50">
-      让收件这件事，<em>回到最纯粹的样子</em>
-    </h2>
-    <p class="hh-section-sub" data-aos="fade-up" data-aos-delay="100">
-      不需要登录，不需要等待。从打开页面到看到邮件，平均不超过两秒。
-    </p>
+<!-- ========== FEATURES ========== -->
+<section class="section">
+  <div class="home-shell">
+    <header class="section-head reveal">
+      <p class="section-eyebrow">核心特性</p>
+      <h2 class="section-title">让收件这件事，回到最纯粹的样子</h2>
+      <p class="section-sub">不需要登录，不需要等待。从打开页面到看到邮件，平均不超过两秒。</p>
+    </header>
 
-    <div class="hh-features">
-      <article class="hh-feature" data-aos="fade-up" data-aos-delay="150">
-        <span class="hh-feature__icon"><i data-lucide="zap" style="width: 26px; height: 26px;"></i></span>
+    <div class="feature-grid">
+      <article class="feature-card reveal" style="--reveal-delay: 40ms;">
+        <span class="feature-card__icon"><i data-lucide="zap" style="width: 24px; height: 24px;"></i></span>
         <h3>实时收件</h3>
-        <p>邮件抵达即推送进列表，第一页保持打开时无需手动刷新。WebSocket 长连接确保毫秒级延迟。</p>
+        <p>邮件抵达即推入列表，第一页保持打开时无需手动刷新，WebSocket 长连接保证毫秒级延迟。</p>
       </article>
-      <article class="hh-feature" data-aos="fade-up" data-aos-delay="220">
-        <span class="hh-feature__icon"><i data-lucide="shield-check" style="width: 26px; height: 26px;"></i></span>
+      <article class="feature-card reveal" style="--reveal-delay: 100ms;">
+        <span class="feature-card__icon"><i data-lucide="shield-check" style="width: 24px; height: 24px;"></i></span>
         <h3>验证码识别</h3>
-        <p>系统自动识别短信级验证码并提供一键复制按钮，开发联调更顺手。识别准确率 99%+。</p>
+        <p>自动识别 4-8 位验证码并提供一键复制，开发联调更顺手，对常见模板做了针对性优化。</p>
       </article>
-      <article class="hh-feature" data-aos="fade-up" data-aos-delay="290">
-        <span class="hh-feature__icon"><i data-lucide="code-2" style="width: 26px; height: 26px;"></i></span>
-        <h3>API & 原始邮件</h3>
-        <p>公开 RESTful 接口与下载原始 EML 文件，方便自动化测试与归档，CI/CD 流水线友好。</p>
+      <article class="feature-card reveal" style="--reveal-delay: 160ms;">
+        <span class="feature-card__icon"><i data-lucide="code-2" style="width: 24px; height: 24px;"></i></span>
+        <h3>开放 API</h3>
+        <p>RESTful 接口 + 下载原始 EML，方便自动化测试、归档与 CI/CD 流水线集成。</p>
       </article>
     </div>
   </div>
 </section>
 
-<!-- ==================== USE CASES ==================== -->
-<section class="hh-cases">
-  <div class="hh-shell">
-    <p class="hh-section-eyebrow" data-aos="fade-up">使用场景</p>
-    <h2 class="hh-section-title" data-aos="fade-up" data-aos-delay="50">
-      为开发流程的每个角落而设计
-    </h2>
-    <p class="hh-section-sub" data-aos="fade-up" data-aos-delay="100">
-      从最简单的注册测试，到复杂的 Webhook 调试与邮件归档，都能在这里找到落点。
-    </p>
+<!-- ========== USE CASES ========== -->
+<section class="section section--tinted">
+  <div class="home-shell">
+    <header class="section-head reveal">
+      <p class="section-eyebrow">使用场景</p>
+      <h2 class="section-title">为开发流程的每个角落而设计</h2>
+      <p class="section-sub">从简单的注册测试到复杂的 Webhook 调试与邮件归档，都能找到落点。</p>
+    </header>
 
-    <div class="hh-cases-grid">
-      <article class="hh-case" data-aos="fade-up" data-aos-delay="100">
-        <span class="hh-case__icon"><i data-lucide="user-plus" style="width: 22px; height: 22px;"></i></span>
+    <div class="case-grid">
+      <article class="case-card reveal">
+        <span class="case-card__icon"><i data-lucide="user-plus" style="width: 20px; height: 20px;"></i></span>
         <div>
           <h4>注册测试</h4>
           <p>批量生成测试账号，快速验证注册流程与发件模板，避免污染真实邮箱。</p>
         </div>
       </article>
-      <article class="hh-case" data-aos="fade-up" data-aos-delay="150">
-        <span class="hh-case__icon"><i data-lucide="key-square" style="width: 22px; height: 22px;"></i></span>
+      <article class="case-card reveal" style="--reveal-delay: 60ms;">
+        <span class="case-card__icon"><i data-lucide="key-square" style="width: 20px; height: 20px;"></i></span>
         <div>
           <h4>验证码联调</h4>
-          <p>自动化脚本通过 API 拉取最新验证码，配合 Selenium / Playwright 完成端到端测试。</p>
+          <p>脚本通过 API 拉取最新验证码，配合 Selenium / Playwright 完成端到端测试。</p>
         </div>
       </article>
-      <article class="hh-case" data-aos="fade-up" data-aos-delay="200">
-        <span class="hh-case__icon"><i data-lucide="git-branch" style="width: 22px; height: 22px;"></i></span>
+      <article class="case-card reveal" style="--reveal-delay: 120ms;">
+        <span class="case-card__icon"><i data-lucide="git-branch" style="width: 20px; height: 20px;"></i></span>
         <div>
           <h4>Webhook 调试</h4>
-          <p>接收并查看任意第三方服务发来的邮件 Webhook，排查内容格式或过滤规则。</p>
+          <p>接收并查看任意第三方服务的邮件内容，排查模板格式与过滤规则。</p>
         </div>
       </article>
-      <article class="hh-case" data-aos="fade-up" data-aos-delay="250">
-        <span class="hh-case__icon"><i data-lucide="archive" style="width: 22px; height: 22px;"></i></span>
+      <article class="case-card reveal" style="--reveal-delay: 180ms;">
+        <span class="case-card__icon"><i data-lucide="archive" style="width: 20px; height: 20px;"></i></span>
         <div>
           <h4>邮件归档</h4>
-          <p>保留原始 EML，下载或转存到 S3 / OSS，构建可审计的邮件凭证流水。</p>
+          <p>保留原始 EML 文件，下载或转存到 S3 / OSS，构建可审计的邮件凭证流水。</p>
         </div>
       </article>
     </div>
   </div>
 </section>
 
-<!-- ==================== API ==================== -->
-<section class="hh-api">
-  <div class="hh-shell">
-    <p class="hh-section-eyebrow" data-aos="fade-up">开发者 API</p>
-    <h2 class="hh-section-title" data-aos="fade-up" data-aos-delay="50">
-      三种语言，<em>同一个接口</em>
-    </h2>
-    <p class="hh-section-sub" data-aos="fade-up" data-aos-delay="100">
-      所有公开接口都遵循 RESTful 风格，访问公开邮箱无需任何鉴权。
-    </p>
+<!-- ========== API ========== -->
+<section class="section">
+  <div class="home-shell">
+    <header class="section-head reveal">
+      <p class="section-eyebrow">开发者 API</p>
+      <h2 class="section-title">三种语言，同一个接口</h2>
+      <p class="section-sub">公开接口遵循 RESTful 风格，浏览公开邮箱无需鉴权。</p>
+    </header>
 
-    <div class="hh-tabs" data-aos="fade-up" data-aos-delay="150">
-      <div class="hh-tabbar" role="tablist">
-        <button class="hh-tabbar__tab is-active" data-tab="curl" type="button" role="tab">curl</button>
-        <button class="hh-tabbar__tab" data-tab="js" type="button" role="tab">JavaScript</button>
-        <button class="hh-tabbar__tab" data-tab="py" type="button" role="tab">Python</button>
+    <div class="code-card reveal">
+      <div class="code-tabbar" role="tablist" aria-label="代码示例">
+        <button class="code-tab" type="button" role="tab" data-tab="curl" aria-selected="true">curl</button>
+        <button class="code-tab" type="button" role="tab" data-tab="js" aria-selected="false">JavaScript</button>
+        <button class="code-tab" type="button" role="tab" data-tab="py" aria-selected="false">Python</button>
       </div>
-      <div>
-        <div class="hh-pane is-active" data-pane="curl">
+      <div class="code-pane is-active" data-pane="curl">
 <pre><span class="tk-comment"># 拉取邮箱最新邮件</span>
-<span class="tk-cmd">curl</span> <span class="tk-flag">-s</span> <span class="tk-str">"https://your-host/api/v1/mailboxes/{{ mailbox_example }}/messages"</span>
+<span class="tk-cmd">curl</span> <span class="tk-flag">-s</span> <span class="tk-str">"https://your-host/api/v1/public/mailboxes/{{ mailbox_example }}/messages"</span>
 
-<span class="tk-comment"># 查看单封邮件 + 验证码</span>
-<span class="tk-cmd">curl</span> <span class="tk-flag">-s</span> <span class="tk-str">"https://your-host/api/v1/messages/&lt;id&gt;"</span> \
-  <span class="tk-flag">-H</span> <span class="tk-str">"Accept: application/json"</span></pre>
-        </div>
-        <div class="hh-pane" data-pane="js">
+<span class="tk-comment"># 查看某封邮件详情</span>
+<span class="tk-cmd">curl</span> <span class="tk-flag">-s</span> <span class="tk-str">"https://your-host/api/v1/public/mailboxes/{{ mailbox_example }}/messages/&lt;id&gt;"</span></pre>
+      </div>
+      <div class="code-pane" data-pane="js">
 <pre><span class="tk-comment">// 拉取邮箱最新邮件</span>
 <span class="tk-cmd">const</span> res = <span class="tk-cmd">await</span> <span class="tk-fn">fetch</span>(
-  <span class="tk-str">`https://your-host/api/v1/mailboxes/{{ mailbox_example }}/messages`</span>
+  <span class="tk-str">`https://your-host/api/v1/public/mailboxes/{{ mailbox_example }}/messages`</span>
 );
-<span class="tk-cmd">const</span> messages = <span class="tk-cmd">await</span> res.<span class="tk-fn">json</span>();
+<span class="tk-cmd">const</span> { items } = <span class="tk-cmd">await</span> res.<span class="tk-fn">json</span>();
 
 <span class="tk-comment">// 抓取最新一封的验证码</span>
-<span class="tk-cmd">const</span> code = messages[<span class="tk-key">0</span>]?.verification_code;</pre>
-        </div>
-        <div class="hh-pane" data-pane="py">
+<span class="tk-cmd">const</span> code = items[<span class="tk-key">0</span>]?.verification_code;</pre>
+      </div>
+      <div class="code-pane" data-pane="py">
 <pre><span class="tk-comment"># 拉取邮箱最新邮件</span>
 <span class="tk-cmd">import</span> httpx
 
 resp = httpx.<span class="tk-fn">get</span>(
-    <span class="tk-str">f"https://your-host/api/v1/mailboxes/{{ mailbox_example }}/messages"</span>
+    <span class="tk-str">f"https://your-host/api/v1/public/mailboxes/{{ mailbox_example }}/messages"</span>
 )
-messages = resp.<span class="tk-fn">json</span>()
+items = resp.<span class="tk-fn">json</span>()[<span class="tk-str">"items"</span>]
 
 <span class="tk-comment"># 抓取最新一封的验证码</span>
-code = messages[<span class="tk-key">0</span>].<span class="tk-fn">get</span>(<span class="tk-str">"verification_code"</span>)</pre>
-        </div>
+code = items[<span class="tk-key">0</span>].<span class="tk-fn">get</span>(<span class="tk-str">"verification_code"</span>)</pre>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ==================== TESTIMONIAL / QUOTE ==================== -->
-<section class="hh-quote">
-  <div class="hh-shell">
-    <div class="hh-quote-card" data-aos="fade-up">
-      <q>专注收件这一件事，把无关的复杂度都关在外面。</q>
-      <p class="quote-foot">— 极速收件箱 · 设计哲学</p>
-    </div>
-  </div>
-</section>
+<!-- ========== FAQ ========== -->
+<section class="section section--tinted">
+  <div class="home-shell">
+    <header class="section-head reveal">
+      <p class="section-eyebrow">常见问题</p>
+      <h2 class="section-title">关于公开邮箱的几件事</h2>
+    </header>
 
-<!-- ==================== FAQ ==================== -->
-<section class="hh-faq">
-  <div class="hh-shell">
-    <p class="hh-section-eyebrow" data-aos="fade-up">常见问题</p>
-    <h2 class="hh-section-title" data-aos="fade-up" data-aos-delay="50">关于公开邮箱的几件事</h2>
-
-    <div class="hh-faq-list" data-aos="fade-up" data-aos-delay="100">
-      <details class="hh-faq-item">
+    <div class="faq-list reveal">
+      <details class="faq-item">
         <summary>这是免费服务吗？需要注册账号吗？</summary>
-        <p>是的，公开邮箱的浏览与 API 访问完全免费，且不需要任何形式的注册。只要你拥有一个本系统已接入域名下的邮箱地址，就能直接使用。</p>
+        <p>公开邮箱的浏览与 API 访问完全免费，不需要任何形式的注册。只要你拥有本系统已接入域名下的邮箱地址，就能直接使用。</p>
       </details>
-      <details class="hh-faq-item">
+      <details class="faq-item">
         <summary>邮件会被永久保存吗？</summary>
-        <p>每个域名都可以设置自定义的保留天数，超出后邮件会被自动清理。如需长期归档，建议使用下载原始 EML 的功能将邮件保存到本地或对象存储。</p>
+        <p>每个域名可以单独配置保留天数，超出后邮件会自动清理。如需长期归档，建议使用下载原始 EML 的方式保存到本地或对象存储。</p>
       </details>
-      <details class="hh-faq-item">
+      <details class="faq-item">
         <summary>支持哪些邮件协议？</summary>
-        <p>系统通过标准 SMTP 协议接收邮件，并支持 STARTTLS。任何能够发送 SMTP 邮件的服务都可以投递到本系统已接入的域名。</p>
+        <p>系统通过标准 SMTP 协议接收邮件并支持 STARTTLS。任何能够发送 SMTP 邮件的服务都可以投递到本系统已接入的域名。</p>
       </details>
-      <details class="hh-faq-item">
-        <summary>验证码识别的准确率如何？</summary>
-        <p>系统会识别 4-8 位的数字、字母数字混合验证码，并对常见邮件模板（GitHub、Google、Notion 等）做了针对性优化。整体识别准确率超过 99%。</p>
-      </details>
-      <details class="hh-faq-item">
+      <details class="faq-item">
         <summary>能否限制特定邮箱不公开？</summary>
-        <p>可以。系统管理员可以在后台逐个设置邮箱的"公开访问"开关，也可以将邮箱标记为"前台隐藏"——使其不出现在域名总览中但仍可通过完整地址访问。</p>
+        <p>可以。管理员可以在后台逐个设置邮箱的"公开访问"开关，也可以将邮箱标记为"前台隐藏"—使其不出现在域名总览中但仍可通过完整地址访问。</p>
       </details>
     </div>
   </div>
 </section>
 
-<!-- ==================== ROUTES ==================== -->
-<section class="hh-routes">
-  <div class="hh-shell">
-    <div class="hh-routes-card" data-aos="fade-up">
+<!-- ========== ROUTES ========== -->
+<section class="section">
+  <div class="home-shell">
+    <div class="route-card reveal">
       <h2>公开路由速查</h2>
-      <p>所有公开路由都遵循同一组 URL 形态，方便手动与脚本访问。</p>
-      <ul class="hh-route-list">
+      <p>所有公开路由都遵循同一组 URL 形态，方便手动访问与脚本集成。</p>
+      <ul class="route-list">
         <li>
-          <span class="hh-route__method">GET</span>
+          <span class="route-method">GET</span>
           <code>/mail/{mailbox_address}</code>
         </li>
         <li>
-          <span class="hh-route__method">GET</span>
+          <span class="route-method">GET</span>
           <code>/mail/{mailbox_address}/{delivery_id}</code>
         </li>
         <li>
-          <span class="hh-route__method">GET</span>
+          <span class="route-method">GET</span>
           <code>/mail/{mailbox_address}/{delivery_id}/raw</code>
+        </li>
+        <li>
+          <span class="route-method">GET</span>
+          <code>/api/v1/public/mailboxes/{mailbox_address}/messages</code>
         </li>
       </ul>
     </div>
@@ -1158,56 +812,45 @@ code = messages[<span class="tk-key">0</span>].<span class="tk-fn">get</span>(<s
 {% block scripts %}
 <script>
   document.addEventListener("DOMContentLoaded", () => {
-    // ---- AOS scroll animations ----
-    if (window.AOS) {
-      AOS.init({ duration: 700, easing: "ease-out-cubic", once: true, offset: 60 });
+    // ---- Scroll reveal (pure IntersectionObserver, no dependency) ----
+    const reveals = document.querySelectorAll(".reveal");
+    if ("IntersectionObserver" in window && reveals.length) {
+      const revealObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            revealObserver.unobserve(entry.target);
+          }
+        }
+      }, { threshold: 0.12, rootMargin: "0px 0px -40px 0px" });
+      reveals.forEach((el) => revealObserver.observe(el));
     } else {
-      // Safety: if AOS fails to load, ensure elements are visible
-      window.setTimeout(() => {
-        document.querySelectorAll("[data-aos]").forEach((el) => {
-          el.style.opacity = "1";
-          el.style.transform = "none";
-        });
-      }, 1000);
+      reveals.forEach((el) => el.classList.add("is-visible"));
     }
 
-    // ---- Typed.js cycling word ----
-    const cycleEl = document.getElementById("cycle");
-    if (cycleEl && window.Typed) {
-      cycleEl.textContent = "";
-      new Typed(cycleEl, {
-        strings: ["公开邮箱", "验证码", "Webhook 调试", "测试账号"],
-        typeSpeed: 80,
-        backSpeed: 50,
-        backDelay: 1800,
-        loop: true,
-        smartBackspace: true,
-      });
-    }
-
-    // ---- Counter animation ----
+    // ---- Counters ----
     const counters = document.querySelectorAll("[data-counter]");
     const animateCounter = (el) => {
-      const target = parseInt(el.dataset.counter, 10);
-      const duration = 1600;
+      const target = parseInt(el.dataset.counter, 10) || 0;
+      const duration = 1400;
       const start = performance.now();
       const tick = (now) => {
         const t = Math.min(1, (now - start) / duration);
         const eased = 1 - Math.pow(1 - t, 3);
-        const value = Math.floor(target * eased);
-        el.textContent = value.toLocaleString();
+        el.textContent = Math.floor(target * eased).toLocaleString();
         if (t < 1) requestAnimationFrame(tick);
+        else el.textContent = target.toLocaleString();
       };
       requestAnimationFrame(tick);
     };
-    if ("IntersectionObserver" in window) {
+    if ("IntersectionObserver" in window && counters.length) {
       const counterObserver = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
+        for (const entry of entries) {
           if (entry.isIntersecting) {
             animateCounter(entry.target);
             counterObserver.unobserve(entry.target);
           }
-        });
+        }
       }, { threshold: 0.4 });
       counters.forEach((el) => counterObserver.observe(el));
     } else {
@@ -1215,13 +858,13 @@ code = messages[<span class="tk-key">0</span>].<span class="tk-fn">get</span>(<s
     }
 
     // ---- API tabs ----
-    const tabs = document.querySelectorAll(".hh-tabbar__tab");
-    const panes = document.querySelectorAll(".hh-pane");
-    tabs.forEach((tab) => {
+    const codeTabs = document.querySelectorAll(".code-tab");
+    const codePanes = document.querySelectorAll(".code-pane");
+    codeTabs.forEach((tab) => {
       tab.addEventListener("click", () => {
-        const target = tab.dataset.tab;
-        tabs.forEach((t) => t.classList.toggle("is-active", t === tab));
-        panes.forEach((p) => p.classList.toggle("is-active", p.dataset.pane === target));
+        const name = tab.dataset.tab;
+        codeTabs.forEach((t) => t.setAttribute("aria-selected", t === tab ? "true" : "false"));
+        codePanes.forEach((p) => p.classList.toggle("is-active", p.dataset.pane === name));
       });
     });
 
@@ -1231,15 +874,16 @@ code = messages[<span class="tk-key">0</span>].<span class="tk-fn">get</span>(<s
     const randomButton = document.getElementById("btn-random");
     const routePrefix = "{{ mail_route_prefix }}";
 
-    function fallbackDomain() {
-      const value = input.value.trim();
+    const fallbackDomain = () => {
+      const value = input?.value.trim() || "";
       if (value.includes("@")) return value.split("@").pop();
-      const placeholder = input.getAttribute("placeholder") || "";
+      const placeholder = input?.getAttribute("placeholder") || "";
       if (placeholder.includes("@")) return placeholder.split("@").pop();
       return "example.com";
-    }
+    };
 
     randomButton?.addEventListener("click", () => {
+      if (!input) return;
       const suffix = Math.random().toString(36).slice(2, 10);
       input.value = `test-${suffix}@${fallbackDomain()}`;
       input.focus();
@@ -1247,7 +891,7 @@ code = messages[<span class="tk-key">0</span>].<span class="tk-fn">get</span>(<s
 
     form?.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (!input.reportValidity()) return;
+      if (!input?.reportValidity()) return;
       const value = input.value.trim();
       const target = routePrefix.replace("PLACEHOLDER", encodeURIComponent(value));
       window.location.href = target;
