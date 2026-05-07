@@ -65,8 +65,8 @@ async def test_public_home_page_exposes_mailbox_entry_point(app_client) -> None:
     response = await app_client.get("/")
 
     assert response.status_code == 200
-    assert "重新定义" in response.text
-    assert "公开邮箱" in response.text
+    assert "一个地址" in response.text
+    assert "公开邮件" in response.text
     assert "立即进入" in response.text
 
 
