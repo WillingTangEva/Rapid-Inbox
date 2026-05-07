@@ -98,7 +98,7 @@ HTTP 与内嵌 SMTP 同进程启动：
 | `SMTP_PORT` | `25` | SMTP 监听端口 |
 | `MAX_MESSAGE_SIZE_BYTES` | `52428800` | 单封邮件最大体积 |
 | `MAX_RECIPIENTS_PER_MESSAGE` | `20` | 单封邮件最大收件人数 |
-| `SMTP_IDLE_TIMEOUT_SECONDS` | `300` | SMTP 会话空闲断开时间 |
+| `SMTP_IDLE_TIMEOUT_SECONDS` | `30` | SMTP 会话空闲断开时间 |
 | `SMTP_MAX_CONCURRENT_CONNECTIONS` | `100` | SMTP 并发连接上限，`0` 表示不限制 |
 | `SMTP_CONNECTION_RATE_LIMIT_COUNT` | `20` | 每个 IP 在短窗口内允许建立的 SMTP 连接数，`0` 表示不限制 |
 | `SMTP_CONNECTION_RATE_LIMIT_WINDOW_SECONDS` | `60` | SMTP per-IP 连接限流窗口 |

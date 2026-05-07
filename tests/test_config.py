@@ -24,6 +24,7 @@ def test_settings_include_bootstrap_and_operational_defaults(tmp_path: Path) -> 
     assert settings.bootstrap_admin_username == "admin"
     assert settings.bootstrap_admin_password == "change-me-now"
     assert settings.smtp_port == 25
+    assert settings.smtp_idle_timeout_seconds == 30
     assert settings.max_recipients_per_message == 20
     assert settings.smtp_close_after_data is True
     assert settings.session_cookie_name == "rapid_inbox_session"

@@ -812,13 +812,36 @@ class RapidInboxRuntime:
         result_code: int | None = None,
         result_message: str | None = None,
     ) -> bool:
-        if not await self.release_smtp_connection(session_id):
-            return False
+        was_active = await self.release_smtp_connection(session_id)
 
         now = utc_now()
 
-        def operation(connection: sqlite3.Connection) -> None:
-            connection.execute(
+        def operation(connection: sqlite3.Connection) -> int:
+            if not was_active:
+                cursor = connection.execute(
+                    """
+                    UPDATE smtp_sessions
+                    SET status = ?,
+                        last_command_at = ?,
+                        disconnect_at = COALESCE(disconnect_at, ?),
+                        close_reason = COALESCE(close_reason, ?),
+                        result_code = COALESCE(result_code, ?),
+                        result_message = COALESCE(result_message, ?)
+                    WHERE id = ? AND status = 'open'
+                    """,
+                    (
+                        status,
+                        now,
+                        now,
+                        close_reason,
+                        result_code,
+                        result_message,
+                        session_id,
+                    ),
+                )
+                return int(cursor.rowcount or 0)
+
+            cursor = connection.execute(
                 """
                 INSERT INTO smtp_sessions (
                     id,
@@ -860,9 +883,9 @@ class RapidInboxRuntime:
                     result_message,
                 ),
             )
+            return int(cursor.rowcount or 0)
 
-        await self.writer.execute(operation)
-        return True
+        return bool(await self.writer.execute(operation))
 
     async def accept_message(
         self,

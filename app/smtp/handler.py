@@ -146,7 +146,6 @@ class RapidInboxHandler:
 
     async def handle_QUIT(self, server, session, envelope):
         session_id = self._ensure_session_id(session)
-        await self.runtime.ensure_smtp_session(session_id, session)
         try:
             await self.runtime.close_smtp_session(
                 session_id,

@@ -221,6 +221,54 @@ async def test_smtp_disconnect_close_wins_if_session_row_is_created_late(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_smtp_disconnect_closes_existing_open_row_even_if_connection_was_not_active(tmp_path) -> None:
+    settings = default_settings(tmp_path)
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+
+    await runtime.start()
+    try:
+        with connect_database(settings.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO smtp_sessions (
+                    id,
+                    remote_ip,
+                    status,
+                    connect_at,
+                    last_command_at
+                ) VALUES ('smtp_open_without_active_connection', '127.0.0.1', 'open', ?, ?)
+                """,
+                ("2026-04-18T20:00:00Z", "2026-04-18T20:00:01Z"),
+            )
+
+        session = SimpleNamespace(
+            rapid_inbox_session_id="smtp_open_without_active_connection",
+            peer=("127.0.0.1", 2525),
+            host_name="mx1.test",
+            ssl=None,
+        )
+        envelope = SimpleNamespace(rcpt_tos=[], mail_from=None, content=b"")
+
+        await handler.handle_DISCONNECT(None, session, envelope, None)
+
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT status, disconnect_at, close_reason
+                FROM smtp_sessions
+                WHERE id = 'smtp_open_without_active_connection'
+                """
+            ).fetchone()
+
+        assert row["status"] == "closed"
+        assert row["disconnect_at"] is not None
+        assert row["close_reason"] == "connection lost"
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_smtp_handler_persists_connect_and_disconnect_events(tmp_path) -> None:
     settings = default_settings(tmp_path)
     runtime = RapidInboxRuntime(settings)
@@ -248,6 +296,31 @@ async def test_smtp_handler_persists_connect_and_disconnect_events(tmp_path) -> 
         assert connected is None
         assert quit_response.startswith("221")
         assert [row["event_type"] for row in rows] == ["connect", "disconnect"]
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_smtp_handler_quit_without_prior_activity_does_not_create_open_session(tmp_path) -> None:
+    settings = default_settings(tmp_path)
+    runtime = RapidInboxRuntime(settings)
+    handler = RapidInboxHandler(runtime)
+
+    await runtime.start()
+    try:
+        session = SimpleNamespace(peer=("127.0.0.1", 2525), host_name="mx1.test", ssl=None)
+        envelope = SimpleNamespace(rcpt_tos=[], mail_from=None, content=b"")
+
+        quit_response = await handler.handle_QUIT(None, session, envelope)
+
+        with connect_database(settings.database_path) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM smtp_sessions WHERE id = ?",
+                (session.rapid_inbox_session_id,),
+            ).fetchone()
+
+        assert quit_response.startswith("221")
+        assert row["count"] == 0
     finally:
         await runtime.stop()
 
