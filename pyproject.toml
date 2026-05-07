@@ -5,8 +5,33 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rapid-inbox"
 version = "0.1.0"
-description = "Rapid Inbox MVP"
+description = "Local-first temporary inbox service with SMTP ingest, public mailboxes, an admin console, and HTTP APIs."
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Dao", email = "wendao@ofoco.cn" },
+]
+keywords = [
+  "email",
+  "smtp",
+  "inbox",
+  "temporary-email",
+  "fastapi",
+  "sqlite",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Communications :: Email",
+  "Topic :: Internet :: WWW/HTTP",
+]
 dependencies = [
   "aiosmtpd==1.4.6",
   "dnspython==2.8.0",
