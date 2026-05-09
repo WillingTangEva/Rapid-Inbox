@@ -192,6 +192,13 @@ async def test_public_download_routes_respect_mailbox_visibility_flags(
         content=attachment_email_bytes,
     )
     await runtime.drain_parser_queue()
+    public_key = await runtime.api_keys.create_key(
+        name="download-visibility-public",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
 
     mailbox = runtime.mailboxes.list_mailboxes()["items"][0]
     mailbox_view = await runtime.get_mailbox_view("foo@adb.com")
@@ -203,12 +210,12 @@ async def test_public_download_routes_respect_mailbox_visibility_flags(
     web_raw = await app_client.get(f"/mail/foo@adb.com/{delivery_id}/raw")
     api_raw = await app_client.get(
         f"/api/v1/public/mailboxes/foo@adb.com/messages/{delivery_id}/raw",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
     web_attachment = await app_client.get(f"/mail/foo@adb.com/{delivery_id}/attachments/{attachment_id}")
     api_attachment = await app_client.get(
         f"/api/v1/public/mailboxes/foo@adb.com/messages/{delivery_id}/attachments/{attachment_id}",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
 
     assert web_raw.status_code == 404

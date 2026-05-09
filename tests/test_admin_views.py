@@ -137,11 +137,56 @@ async def test_admin_logout_revokes_session_and_clears_cookie(app_client, runtim
 
 
 @pytest.mark.asyncio
+async def test_admin_form_posts_reject_cross_origin_requests(app_client, runtime) -> None:
+    await _login_and_change_initial_password(app_client, runtime)
+
+    response = await app_client.post(
+        "/admin/logout",
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "invalid origin"
+
+
+@pytest.mark.asyncio
+async def test_admin_form_origin_check_ignores_spoofed_forwarded_host(app_client, runtime) -> None:
+    await _login_and_change_initial_password(app_client, runtime)
+
+    response = await app_client.post(
+        "/admin/logout",
+        headers={
+            "Origin": "http://evil.example",
+            "X-Forwarded-Host": "evil.example",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "invalid origin"
+
+
+@pytest.mark.asyncio
+async def test_admin_form_origin_check_rejects_same_host_different_port(app_client, runtime) -> None:
+    await _login_and_change_initial_password(app_client, runtime)
+
+    response = await app_client.post(
+        "/admin/logout",
+        headers={"Origin": "http://testserver:8081"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "invalid origin"
+
+
+@pytest.mark.asyncio
 async def test_admin_pages_redirect_unauthenticated_users_to_login(app_client) -> None:
     response = await app_client.get("/admin")
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "SAMEORIGIN"
+    assert response.headers["referrer-policy"] == "no-referrer"
 
 
 @pytest.mark.asyncio
@@ -160,6 +205,8 @@ async def test_admin_live_page_uses_cursor_based_stream_url(app_client, runtime)
     assert response.status_code == 200
     assert "实时监控中枢" in response.text
     assert "after_cursor=" in response.text
+    assert "msg.innerHTML = msgHtml" not in response.text
+    assert "appendTextSpan" in response.text
 
 
 @pytest.mark.asyncio
@@ -171,6 +218,24 @@ async def test_admin_login_rejects_invalid_credentials_with_error(app_client) ->
 
     assert response.status_code == 401
     assert "用户名或密码不正确。" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_login_rate_limit_blocks_repeated_failures(app_client) -> None:
+    for _ in range(5):
+        response = await app_client.post(
+            "/admin/login",
+            data={"username": "admin", "password": "not-the-password"},
+        )
+        assert response.status_code == 401
+
+    blocked = await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": "not-the-password"},
+    )
+
+    assert blocked.status_code == 429
+    assert "登录失败次数过多" in blocked.text
 
 
 @pytest.mark.asyncio
@@ -487,6 +552,46 @@ async def test_admin_settings_page_can_change_admin_password(app_client, runtime
     assert old_login.status_code == 401
     assert new_login.status_code == 200
     assert "域名管理" in new_login.text
+
+
+@pytest.mark.asyncio
+async def test_admin_password_change_rejects_default_or_unchanged_password(app_client, runtime) -> None:
+    await app_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        follow_redirects=True,
+    )
+
+    default_password = await app_client.post(
+        "/admin/settings/password",
+        data={
+            "current_password": runtime.settings.bootstrap_admin_password,
+            "new_password": runtime.settings.bootstrap_admin_password,
+            "confirm_password": runtime.settings.bootstrap_admin_password,
+        },
+    )
+    changed = await app_client.post(
+        "/admin/settings/password",
+        data={
+            "current_password": runtime.settings.bootstrap_admin_password,
+            "new_password": "new-admin-password",
+            "confirm_password": "new-admin-password",
+        },
+    )
+    unchanged = await app_client.post(
+        "/admin/settings/password",
+        data={
+            "current_password": "new-admin-password",
+            "new_password": "new-admin-password",
+            "confirm_password": "new-admin-password",
+        },
+    )
+
+    assert default_password.status_code == 400
+    assert "默认初始密码" in default_password.text
+    assert changed.status_code == 303
+    assert unchanged.status_code == 400
+    assert "不能与当前密码相同" in unchanged.text
 
 
 @pytest.mark.asyncio

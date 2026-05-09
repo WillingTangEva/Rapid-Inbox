@@ -105,6 +105,13 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client is not None else None
 
 
+def _secure_cookie(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto:
+        return forwarded_proto.split(",", 1)[0].strip().lower() == "https"
+    return request.url.scheme == "https"
+
+
 def _render(request: Request, template_name: str, context: dict[str, Any], *, status_code: int = 200) -> Response:
     response = request.app.state.templates.TemplateResponse(request, template_name, context)
     response.status_code = status_code
@@ -972,6 +979,26 @@ async def login(request: Request) -> Response:
 
     try:
         admin = await request.app.state.runtime.auth.authenticate_admin(username, password, ip=_client_ip(request))
+    except PermissionError:
+        await _log_admin_audit(
+            request,
+            None,
+            "admin.login",
+            "admin",
+            None,
+            "failure",
+            details={"username": username, "reason": "rate_limited"},
+        )
+        return _render(
+            request,
+            "admin/login.html",
+            {
+                "page_title": "管理员登录",
+                "error": "登录失败次数过多，请稍后再试。",
+                "username": username,
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
     except LookupError:
         await _log_admin_audit(
             request,
@@ -1005,6 +1032,7 @@ async def login(request: Request) -> Response:
         session["token"],
         httponly=True,
         samesite="lax",
+        secure=_secure_cookie(request),
         max_age=SESSION_DURATION_DAYS * 24 * 60 * 60,
         path="/",
     )
@@ -1023,7 +1051,7 @@ async def logout(request: Request) -> Response:
         await _log_admin_audit(request, admin, "admin.logout", "admin_session", str(admin.get("session_id")), "success")
 
     response = _redirect_to_login()
-    response.delete_cookie(cookie_name, path="/")
+    response.delete_cookie(cookie_name, path="/", secure=_secure_cookie(request), samesite="lax")
     return response
 
 
@@ -2102,6 +2130,17 @@ async def change_admin_password(request: Request) -> Response:
             int(admin_or_response["id"]),
             current_password,
             new_password,
+        )
+    except ValueError as exc:
+        error_map = {
+            "password must not use the default bootstrap value": "新密码不能继续使用默认初始密码。",
+            "password must be changed": "新密码不能与当前密码相同。",
+        }
+        return _render(
+            request,
+            "admin/settings.html",
+            _settings_context(request, admin_or_response, password_error=error_map.get(str(exc), "新密码不符合安全要求。")),
+            status_code=status.HTTP_400_BAD_REQUEST,
         )
     except LookupError:
         return _render(

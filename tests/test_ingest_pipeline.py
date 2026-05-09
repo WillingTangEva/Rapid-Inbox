@@ -71,6 +71,35 @@ def test_write_raw_message_fsyncs_created_directory_chain(tmp_path, monkeypatch)
     assert expected_dirs.issubset(set(fsynced_dirs))
 
 
+def test_storage_rejects_paths_outside_storage_root(tmp_path) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    storage = FileStorage(settings)
+
+    with pytest.raises(ValueError):
+        storage.resolve("../outside.eml")
+    with pytest.raises(ValueError):
+        storage.resolve(str(tmp_path / "outside.eml"))
+
+
+def test_storage_writes_private_files_and_directories(tmp_path) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    storage = FileStorage(settings)
+
+    raw_path, _, _ = storage.write_raw_message("msg_1", "2026-04-18T20:00:00Z", b"raw body")
+    resolved = storage.resolve(raw_path)
+
+    assert stat.S_IMODE(resolved.stat().st_mode) == 0o600
+    assert stat.S_IMODE((settings.storage_root / "raw").stat().st_mode) == 0o700
+    assert stat.S_IMODE((settings.storage_root / "raw" / "2026").stat().st_mode) == 0o700
+    assert stat.S_IMODE((settings.storage_root / "raw" / "2026" / "04" / "18").stat().st_mode) == 0o700
+
+
 @pytest.mark.asyncio
 async def test_accept_message_writes_manifest_for_recovery(tmp_path, sample_email_bytes: bytes) -> None:
     settings = Settings(

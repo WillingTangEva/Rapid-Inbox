@@ -105,8 +105,8 @@ HTTP 与内嵌 SMTP 同进程启动：
 | `PARSE_WORKER_COUNT` | `4` | 后台 MIME 解析 worker 数量 |
 | `FSYNC_STORAGE_WRITES` | `false` | 是否对邮件文件写入执行强制 fsync |
 | `DISK_WARNING_THRESHOLD_PERCENT` | `85` | Dashboard 磁盘使用率告警阈值 |
-| `ADMIN_TOKEN` | `dev-admin-token` | 兼容管理 API 的管理令牌 |
-| `PUBLIC_API_KEY` | `public-demo-key` | 兼容公开 API 的默认访问密钥 |
+| `ADMIN_TOKEN` | 未启用 | 兼容管理 API 的管理令牌；只有显式配置为非默认随机值时才启用 |
+| `PUBLIC_API_KEY` | 未启用 | 兼容公开 API 的访问密钥；建议改用后台创建的 API Key |
 
 配置优先级：
 
@@ -136,7 +136,7 @@ GET /mail/{mailbox_address}/{delivery_id}/attachments/{attachment_id}
 
 ```bash
 curl \
-  -H "X-API-Key: public-demo-key" \
+  -H "X-API-Key: <your-public-api-key>" \
   "http://127.0.0.1:8000/api/v1/public/mailboxes/code@example.com/messages"
 ```
 
@@ -144,7 +144,7 @@ curl \
 
 ```bash
 curl \
-  -H "X-API-Key: public-demo-key" \
+  -H "X-API-Key: <your-public-api-key>" \
   "http://127.0.0.1:8000/api/v1/public/mailboxes/code@example.com/messages?limit=20&cursor=<next_cursor>"
 ```
 
@@ -190,7 +190,7 @@ python3 -m venv .venv
 
 ## 安全提醒
 
-- 不要在公开环境使用默认管理员密码、默认 `ADMIN_TOKEN` 或默认 `PUBLIC_API_KEY`。
+- 不要在公开环境使用默认管理员密码；如需兼容令牌访问，请配置随机的 `ADMIN_TOKEN` / `PUBLIC_API_KEY`。
 - SMTP 端口 `25` 在部分系统中需要管理员权限，生产部署时建议通过反向代理、端口映射或专用服务账户处理。
 - 公开收件箱适合测试和临时场景，不建议用于接收敏感长期邮件。
 - `.env`、`storage/`、数据库和邮件落盘文件不应提交到 Git。

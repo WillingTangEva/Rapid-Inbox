@@ -60,6 +60,26 @@ async def test_admin_api_supports_message_reparse_and_settings_update(admin_clie
 
 
 @pytest.mark.asyncio
+async def test_live_sse_api_key_enforces_ip_restrictions(app_client, runtime) -> None:
+    key = await runtime.api_keys.create_key(
+        name="live-ip-restricted",
+        kind="admin",
+        scopes=["live.read"],
+        domain_ids=[],
+        mailbox_patterns=[],
+        allowed_ip_cidrs=["203.0.113.0/24"],
+    )
+
+    response = await app_client.get(
+        "/api/v1/admin/live/smtp/stream",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "api key ip not allowed"
+
+
+@pytest.mark.asyncio
 async def test_admin_api_mutation_succeeds_when_audit_logging_fails(admin_client, runtime) -> None:
     async def failing_audit_log(*args, **kwargs):
         raise RuntimeError("audit unavailable")

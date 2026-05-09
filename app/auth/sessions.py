@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import threading
 import uuid
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any
 
-from app.config import Settings
+from app.config import DEFAULT_BOOTSTRAP_ADMIN_PASSWORD, Settings
 from app.db.connection import connect_database
 from app.db.writer import DatabaseWriter
 from app.ingest.storage import utc_now
@@ -16,6 +19,8 @@ from .passwords import hash_password, verify_password
 
 
 SESSION_DURATION_DAYS = 30
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 
 
 def _hash_session_token(token: str) -> str:
@@ -32,6 +37,8 @@ class AuthService:
     def __init__(self, settings: Settings, writer: DatabaseWriter) -> None:
         self.settings = settings
         self.writer = writer
+        self._login_failure_lock = threading.Lock()
+        self._login_failures: dict[str, deque[float]] = {}
 
     async def count_admins(self) -> int:
         with connect_database(self.settings.database_path) as connection:
@@ -67,6 +74,7 @@ class AuthService:
         )
 
     async def authenticate_admin(self, username: str, password: str, *, ip: str | None = None) -> dict[str, Any]:
+        self.assert_login_allowed(username, ip=ip)
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
                 """
@@ -89,8 +97,10 @@ class AuthService:
             ).fetchone()
 
         if row is None or not verify_password(password, row["password_hash"]):
+            self.record_login_failure(username, ip=ip)
             raise LookupError("invalid admin credentials")
 
+        self.clear_login_failures(username, ip=ip)
         now = utc_now()
         await self.writer.execute(
             lambda connection: connection.execute(
@@ -109,6 +119,40 @@ class AuthService:
         admin["last_login_ip"] = ip if ip is not None else row["last_login_ip"]
         return admin
 
+    def assert_login_allowed(self, username: str, *, ip: str | None = None) -> None:
+        key = self._login_failure_key(username, ip)
+        now = monotonic()
+        cutoff = now - LOGIN_FAILURE_WINDOW_SECONDS
+        with self._login_failure_lock:
+            window = self._login_failures.get(key)
+            if window is None:
+                return
+            while window and window[0] <= cutoff:
+                window.popleft()
+            if not window:
+                self._login_failures.pop(key, None)
+                return
+            if len(window) >= LOGIN_FAILURE_LIMIT:
+                raise PermissionError("too many login attempts")
+
+    def record_login_failure(self, username: str, *, ip: str | None = None) -> None:
+        key = self._login_failure_key(username, ip)
+        now = monotonic()
+        cutoff = now - LOGIN_FAILURE_WINDOW_SECONDS
+        with self._login_failure_lock:
+            window = self._login_failures.setdefault(key, deque())
+            while window and window[0] <= cutoff:
+                window.popleft()
+            window.append(now)
+
+    def clear_login_failures(self, username: str, *, ip: str | None = None) -> None:
+        key = self._login_failure_key(username, ip)
+        with self._login_failure_lock:
+            self._login_failures.pop(key, None)
+
+    def _login_failure_key(self, username: str, ip: str | None) -> str:
+        return f"{ip or 'unknown'}:{username.strip().lower()}"
+
     async def change_admin_password(self, admin_id: int, current_password: str, new_password: str) -> None:
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
@@ -122,6 +166,10 @@ class AuthService:
 
         if row is None or not verify_password(current_password, row["password_hash"]):
             raise LookupError("invalid admin credentials")
+        if new_password == DEFAULT_BOOTSTRAP_ADMIN_PASSWORD:
+            raise ValueError("password must not use the default bootstrap value")
+        if verify_password(new_password, row["password_hash"]):
+            raise ValueError("password must be changed")
 
         password_hash = hash_password(new_password)
         updated_at = utc_now()

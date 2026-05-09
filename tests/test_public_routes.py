@@ -86,6 +86,13 @@ async def test_mailbox_page_and_public_api_show_received_message(tmp_path, sampl
         await runtime.drain_parser_queue()
         mailbox = await runtime.get_mailbox_view("foo@adb.com")
         delivery_id = mailbox["items"][0]["delivery_id"]
+        public_key = await runtime.api_keys.create_key(
+            name="public-route-fixture",
+            kind="public",
+            scopes=["public.read"],
+            domain_ids=[],
+            mailbox_patterns=["foo@adb.com"],
+        )
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -93,7 +100,7 @@ async def test_mailbox_page_and_public_api_show_received_message(tmp_path, sampl
             detail = await client.get(f"/mail/foo@adb.com/{delivery_id}")
             api = await client.get(
                 "/api/v1/public/mailboxes/foo@adb.com/messages",
-                headers={"X-API-Key": settings.public_api_key},
+                headers={"X-API-Key": public_key["plain_text"]},
             )
 
         assert page.status_code == 200
@@ -200,14 +207,21 @@ async def test_public_mailbox_api_returns_pagination_metadata(app_client, runtim
         content=_mail_bytes("Newest", "newest-api@example.com", "newest"),
     )
     await runtime.drain_parser_queue()
+    public_key = await runtime.api_keys.create_key(
+        name="pagination-public",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
 
     first_page = await app_client.get(
         "/api/v1/public/mailboxes/foo@adb.com/messages?limit=1&offset=0",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
     second_page = await app_client.get(
         "/api/v1/public/mailboxes/foo@adb.com/messages?limit=1&offset=1",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
 
     assert first_page.status_code == 200
@@ -237,15 +251,22 @@ async def test_public_mailbox_api_supports_delivery_cursor_pagination(app_client
             content=_mail_bytes(subject, f"cursor-{subject.lower()}@example.com", subject),
         )
     await runtime.drain_parser_queue()
+    public_key = await runtime.api_keys.create_key(
+        name="cursor-public",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
 
     first_page = await app_client.get(
         "/api/v1/public/mailboxes/foo@adb.com/messages?limit=1",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
     cursor = first_page.json()["next_cursor"]
     second_page = await app_client.get(
         f"/api/v1/public/mailboxes/foo@adb.com/messages?limit=1&cursor={cursor}",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
 
     assert first_page.status_code == 200
@@ -290,6 +311,13 @@ async def test_public_mailbox_routes_respect_mailbox_visibility_flags(
         content=sample_email_bytes,
     )
     await runtime.drain_parser_queue()
+    public_key = await runtime.api_keys.create_key(
+        name="visibility-public",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
 
     mailbox = runtime.mailboxes.list_mailboxes()["items"][0]
     await runtime.mailboxes.update_mailbox(mailbox["id"], mailbox_updates)
@@ -297,7 +325,7 @@ async def test_public_mailbox_routes_respect_mailbox_visibility_flags(
     web_response = await app_client.get("/mail/foo@adb.com")
     api_response = await app_client.get(
         "/api/v1/public/mailboxes/foo@adb.com/messages",
-        headers={"X-API-Key": str(runtime.settings.public_api_key)},
+        headers={"X-API-Key": public_key["plain_text"]},
     )
 
     assert web_response.status_code == 404

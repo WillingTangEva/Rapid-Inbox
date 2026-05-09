@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import sqlite3
 from typing import Any
@@ -114,7 +115,8 @@ async def require_admin_key(
     if x_api_key is None:
         raise HTTPException(status_code=401, detail="invalid admin api key")
 
-    if x_api_key == request.app.state.settings.admin_token:
+    settings = request.app.state.settings
+    if settings.legacy_admin_token_enabled and hmac.compare_digest(x_api_key, settings.admin_token):
         return PermissionContext(
             scopes=(),
             domain_ids=(),
@@ -193,6 +195,7 @@ async def require_admin_live_access(
     if x_api_key is not None:
         admin = await require_admin_key(request, x_api_key)
         require_admin_scope(admin, "live.read")
+        await _record_admin_key_usage(request, admin)
         return admin
 
     admin_session = await _current_admin_session(request)

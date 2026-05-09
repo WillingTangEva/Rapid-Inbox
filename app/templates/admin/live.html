@@ -420,6 +420,29 @@
       return shanghaiTimeFormatter.format(date);
     };
 
+    const appendTextSpan = (parent, className, text) => {
+      const span = document.createElement("span");
+      span.className = className;
+      span.textContent = text;
+      parent.appendChild(span);
+      return span;
+    };
+
+    const appendChevron = (parent) => {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "log-chevron");
+      svg.setAttribute("width", "14");
+      svg.setAttribute("height", "14");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      polyline.setAttribute("points", "9 18 15 12 9 6");
+      svg.appendChild(polyline);
+      parent.appendChild(svg);
+    };
+
     const appendEvent = (payload) => {
       const emptyState = feed.querySelector("[data-empty-state='live']");
       if (emptyState) feed.innerHTML = "";
@@ -443,17 +466,25 @@
 
       const msg = document.createElement("span");
       msg.className = "log-message";
-      let msgHtml = "";
-      if (payload.rcpt_to) msgHtml += `→ <span class="log-target">${payload.rcpt_to}</span> `;
-      if (payload.session_id) msgHtml += `<span class="log-meta-id">[会话: ${payload.session_id}]</span> `;
-      if (payload.message_id) msgHtml += `<span class="log-meta-id">[邮件ID: ${payload.message_id}]</span> `;
-      if (!payload.rcpt_to && !payload.session_id && !payload.message_id) msgHtml += `<span class="log-meta-id">系统事件已触发</span>`;
-      msg.innerHTML = msgHtml;
+      if (payload.rcpt_to) {
+        msg.appendChild(document.createTextNode("→ "));
+        appendTextSpan(msg, "log-target", String(payload.rcpt_to));
+        msg.appendChild(document.createTextNode(" "));
+      }
+      if (payload.session_id) {
+        appendTextSpan(msg, "log-meta-id", `[会话: ${String(payload.session_id)}]`);
+        msg.appendChild(document.createTextNode(" "));
+      }
+      if (payload.message_id) {
+        appendTextSpan(msg, "log-meta-id", `[邮件ID: ${String(payload.message_id)}]`);
+        msg.appendChild(document.createTextNode(" "));
+      }
+      if (!payload.rcpt_to && !payload.session_id && !payload.message_id) {
+        appendTextSpan(msg, "log-meta-id", "系统事件已触发");
+      }
       summary.appendChild(msg);
 
-      const chevron = document.createElement("div");
-      chevron.innerHTML = `<svg class="log-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
-      summary.appendChild(chevron.firstChild);
+      appendChevron(summary);
 
       const details = document.createElement("div");
       details.className = "log-details";

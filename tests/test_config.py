@@ -75,6 +75,36 @@ def test_default_settings_loads_values_from_dotenv(tmp_path: Path) -> None:
     assert settings.fsync_storage_writes is True
     assert settings.admin_token == "admin-token-1"
     assert settings.public_api_key == "public-token-1"
+    assert settings.legacy_admin_token_enabled is True
+    assert settings.legacy_public_api_key_enabled is True
+
+
+def test_default_legacy_tokens_are_not_enabled_for_runtime_config(tmp_path: Path) -> None:
+    settings = default_settings(tmp_path)
+
+    assert settings.admin_token == "dev-admin-token"
+    assert settings.public_api_key == "public-demo-key"
+    assert settings.legacy_admin_token_enabled is False
+    assert settings.legacy_public_api_key_enabled is False
+
+
+def test_settings_constructor_disables_builtin_demo_tokens(tmp_path: Path) -> None:
+    settings = Settings(storage_root=tmp_path / "storage", database_path=tmp_path / "storage" / "app.db")
+
+    assert settings.legacy_admin_token_enabled is False
+    assert settings.legacy_public_api_key_enabled is False
+
+
+def test_blank_legacy_tokens_are_not_enabled(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "\n".join(["ADMIN_TOKEN=", "PUBLIC_API_KEY="]),
+        encoding="utf-8",
+    )
+
+    settings = default_settings(tmp_path)
+
+    assert settings.legacy_admin_token_enabled is False
+    assert settings.legacy_public_api_key_enabled is False
 
 
 def test_environment_variables_override_dotenv(tmp_path: Path, monkeypatch) -> None:

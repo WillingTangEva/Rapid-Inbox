@@ -67,16 +67,20 @@ class ApiKeyService:
         self._usage_lock = threading.Lock()
         self._usage_windows: dict[int, deque[float]] = {}
 
-    def configure_legacy_public_api_key(self, legacy_token: str) -> PublicAPIKeyProxy:
-        self._legacy_public_api_key = legacy_token
-        self._legacy_public_context = PermissionContext(
-            scopes=("public.read",),
-            domain_ids=(),
-            mailbox_patterns=(),
-            public_id="legacy-public-token",
-            name="legacy-public-token",
-            kind="public",
-            legacy_credential=True,
+    def configure_legacy_public_api_key(self, legacy_token: str, *, enabled: bool = True) -> PublicAPIKeyProxy:
+        self._legacy_public_api_key = legacy_token if enabled else None
+        self._legacy_public_context = (
+            PermissionContext(
+                scopes=("public.read",),
+                domain_ids=(),
+                mailbox_patterns=(),
+                public_id="legacy-public-token",
+                name="legacy-public-token",
+                kind="public",
+                legacy_credential=True,
+            )
+            if enabled
+            else None
         )
         return PublicAPIKeyProxy(legacy_token, self)
 
@@ -448,6 +452,21 @@ class ApiKeyService:
     def authenticate_query(self, plain_text: str, *, request_ip: str | None = None) -> PermissionContext:
         return self._authenticate_plain_text(plain_text, transport="query", request_ip=request_ip)
 
+    def authenticate_public_credential(
+        self,
+        plain_text: str,
+        *,
+        transport: str,
+        request_ip: str | None = None,
+    ) -> PermissionContext:
+        if (
+            self._legacy_public_api_key is not None
+            and self._legacy_public_context is not None
+            and hmac.compare_digest(plain_text, self._legacy_public_api_key)
+        ):
+            return self._legacy_public_context
+        return self._authenticate_plain_text(plain_text, transport=transport, request_ip=request_ip)
+
     async def record_usage(self, context: PermissionContext, *, ip: str | None = None) -> None:
         if context.api_key_id is None:
             return
@@ -584,7 +603,7 @@ class ApiKeyService:
         if not isinstance(candidate, str):
             return True
 
-        if self._legacy_public_api_key is not None and candidate == self._legacy_public_api_key:
+        if self._legacy_public_api_key is not None and hmac.compare_digest(candidate, self._legacy_public_api_key):
             if self._legacy_public_context is not None:
                 set_active_permission_context(self._legacy_public_context)
             return False

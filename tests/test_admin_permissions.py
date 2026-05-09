@@ -284,3 +284,37 @@ async def test_query_key_auth_respects_allow_query(runtime) -> None:
 
     assert context.kind == "public"
     assert context.public_id == enabled_key["public_id"]
+
+
+@pytest.mark.asyncio
+async def test_public_api_query_key_cannot_use_header_only_key(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    header_only_key = await runtime.api_keys.create_key(
+        name="query-disabled-http",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=[],
+        allow_header=True,
+        allow_query=False,
+    )
+    query_key = await runtime.api_keys.create_key(
+        name="query-enabled-http",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=[],
+        allow_query=True,
+    )
+
+    rejected = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        params={"api_key": header_only_key["plain_text"]},
+    )
+    accepted = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        params={"api_key": query_key["plain_text"]},
+    )
+
+    assert rejected.status_code == 401
+    assert accepted.status_code == 200

@@ -63,11 +63,15 @@ class RapidInboxRuntime:
         self.settings.ensure_directories()
         self.storage.cleanup_abandoned_clear_trash()
         initialize_database(self.settings.database_path)
+        self._assert_runtime_secrets_are_safe()
         await self.auth.ensure_bootstrap_admin()
         await self.system_settings.load_persisted_settings()
         await self.writer.execute(self._mark_orphaned_smtp_sessions_closed)
         # Swap the plain config token for a string-like proxy that can validate DB-backed keys too.
-        self.settings.public_api_key = self.api_keys.configure_legacy_public_api_key(self._legacy_public_api_key)
+        self.settings.public_api_key = self.api_keys.configure_legacy_public_api_key(
+            self._legacy_public_api_key,
+            enabled=self.settings.legacy_public_api_key_enabled,
+        )
         await self.parse_queue.start()
         await self.recovery.run()
         self.domains.reload()
@@ -257,6 +261,23 @@ class RapidInboxRuntime:
             "files": 0,
             "dropped_parse_tasks": 0,
         }
+
+    def _assert_runtime_secrets_are_safe(self) -> None:
+        bootstrap_admin_pending = self._bootstrap_admin_pending()
+        insecure_defaults = self.settings.insecure_runtime_defaults(
+            bootstrap_admin_pending=bootstrap_admin_pending,
+        )
+        if not insecure_defaults or not self.settings.externally_bound():
+            return
+        raise RuntimeError(
+            "Refusing to start with insecure default credentials on a non-loopback bind: "
+            + ", ".join(insecure_defaults)
+        )
+
+    def _bootstrap_admin_pending(self) -> bool:
+        with connect_database(self.settings.database_path) as connection:
+            row = connection.execute("SELECT COUNT(*) AS count FROM admins").fetchone()
+        return row is None or int(row["count"]) == 0
 
     def _delete_expired_runtime_records(
         self,
@@ -1066,6 +1087,7 @@ class RapidInboxRuntime:
 
         if not all(isinstance(manifest[key], str) for key in ("message_id", "received_at", "raw_path", "raw_sha256")):
             raise ValueError("invalid recovery manifest")
+        self.storage.resolve(str(manifest["raw_path"]))
         if "recovery_order_ns" in manifest:
             recovery_order_ns = manifest["recovery_order_ns"]
             if not isinstance(recovery_order_ns, int) or isinstance(recovery_order_ns, bool) or recovery_order_ns < 0:

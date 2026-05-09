@@ -26,7 +26,7 @@ wendao@ofoco.cn
 
 ## 使用建议
 
-- 修改默认管理员密码、`ADMIN_TOKEN` 和 `PUBLIC_API_KEY`。
+- 修改默认管理员密码；如需兼容令牌访问，显式配置随机的 `ADMIN_TOKEN` 和 `PUBLIC_API_KEY`。
 - 对外部署时将 HTTP 服务放在可信反向代理后，并启用 TLS。
 - 限制 SMTP 暴露范围，按需使用防火墙或云安全组。
 - 不要把 `.env`、`storage/`、数据库、真实邮件样本或密钥提交到 Git。

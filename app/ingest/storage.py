@@ -79,7 +79,16 @@ class FileStorage:
         return self.resolve(relative_path).read_text(encoding="utf-8")
 
     def resolve(self, relative_path: str) -> Path:
-        return self.storage_root / relative_path
+        path = Path(relative_path)
+        if path.is_absolute():
+            raise ValueError("storage path must be relative")
+        root = self.storage_root.resolve(strict=False)
+        candidate = (root / path).resolve(strict=False)
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("storage path escapes storage root") from exc
+        return candidate
 
     def cleanup_stale_parts(self) -> None:
         # Legacy visible temp files are safe to clean in fixed-extension stores.
@@ -107,13 +116,15 @@ class FileStorage:
             self._settings.tmp_dir,
         ):
             if directory.exists():
-                trash_root.mkdir(parents=True, exist_ok=True)
+                trash_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+                self._chmod_private(trash_root, directory=True)
                 try:
                     directory.replace(trash_root / directory.name)
                     moved_directories += 1
                 except OSError:
                     shutil.rmtree(directory, ignore_errors=True)
-            directory.mkdir(parents=True, exist_ok=True)
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._chmod_private(directory, directory=True)
         if moved_directories:
             self._delete_tree_in_background(trash_root)
         else:
@@ -135,7 +146,7 @@ class FileStorage:
 
     def _write_bytes(self, relative_path: str, content: bytes) -> None:
         final_path = self.resolve(relative_path)
-        final_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_private_directory(final_path.parent)
         # Keep write-ahead temp files hidden so final filenames can safely end in ".part".
         part_path = final_path.with_name(f".{final_path.name}.part")
         with part_path.open("wb") as handle:
@@ -143,9 +154,38 @@ class FileStorage:
             if self._settings.fsync_storage_writes:
                 handle.flush()
                 os.fsync(handle.fileno())
+        self._chmod_private(part_path)
         os.replace(part_path, final_path)
+        self._chmod_private(final_path)
         if self._settings.fsync_storage_writes:
             self._fsync_directory_chain(final_path.parent)
+
+    def _ensure_private_directory(self, directory: Path) -> None:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._chmod_directory_chain(directory)
+
+    def _chmod_directory_chain(self, directory: Path) -> None:
+        root = self.storage_root.resolve(strict=False)
+        current = directory.resolve(strict=False)
+        try:
+            current.relative_to(root)
+        except ValueError:
+            return
+
+        paths: list[Path] = []
+        while True:
+            paths.append(current)
+            if current == root:
+                break
+            current = current.parent
+        for path in reversed(paths):
+            self._chmod_private(path, directory=True)
+
+    def _chmod_private(self, path: Path, *, directory: bool = False) -> None:
+        try:
+            path.chmod(0o700 if directory else 0o600)
+        except OSError:
+            return
 
     def _fsync_directory_chain(self, directory: Path) -> None:
         current = directory

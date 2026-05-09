@@ -554,5 +554,5 @@ class MessageService:
             return ""
         try:
             return self._runtime.storage.read_text(str(storage_path)) or ""
-        except OSError:
+        except (OSError, ValueError):
             return ""

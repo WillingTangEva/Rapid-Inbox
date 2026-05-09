@@ -15,16 +15,20 @@ router = APIRouter()
 
 
 def require_public_api_key(request: Request, api_key: str | None, query_api_key: str | None = None) -> None:
+    set_active_permission_context(None)
     credential = api_key or query_api_key
-    if query_api_key and not api_key and query_api_key != request.app.state.settings.public_api_key:
-        try:
-            context = request.app.state.runtime.api_keys.authenticate_query(query_api_key)
-        except LookupError as exc:
-            raise HTTPException(status_code=401, detail="invalid api key") from exc
-        set_active_permission_context(context)
-        return
-    if credential != request.app.state.settings.public_api_key:
+    if not credential:
         raise HTTPException(status_code=401, detail="invalid api key")
+
+    transport = "header" if api_key else "query"
+    try:
+        context = request.app.state.runtime.api_keys.authenticate_public_credential(
+            credential,
+            transport=transport,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=401, detail="invalid api key") from exc
+    set_active_permission_context(context)
 
 
 def _message_service(request: Request) -> MessageService:

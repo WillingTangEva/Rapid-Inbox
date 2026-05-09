@@ -68,7 +68,11 @@ async def runtime(app_fixture) -> RapidInboxRuntime:
 async def app_client(app_fixture) -> AsyncIterator[httpx.AsyncClient]:
     app, _ = app_fixture
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={"Origin": "http://testserver"},
+    ) as client:
         yield client
 
 

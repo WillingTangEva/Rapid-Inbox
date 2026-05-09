@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import ast
+import ipaddress
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+DEFAULT_BOOTSTRAP_ADMIN_PASSWORD = "change-me-now"
+DEFAULT_ADMIN_TOKEN = "dev-admin-token"
+DEFAULT_PUBLIC_API_KEY = "public-demo-key"
 
 
 @dataclass(slots=True)
@@ -11,7 +17,7 @@ class Settings:
     storage_root: Path
     database_path: Path
     bootstrap_admin_username: str = "admin"
-    bootstrap_admin_password: str = "change-me-now"
+    bootstrap_admin_password: str = DEFAULT_BOOTSTRAP_ADMIN_PASSWORD
     session_cookie_name: str = "rapid_inbox_session"
     host: str = "127.0.0.1"
     port: int = 8000
@@ -27,8 +33,16 @@ class Settings:
     parse_worker_count: int = 4
     fsync_storage_writes: bool = False
     disk_warning_threshold_percent: int = 85
-    admin_token: str = "dev-admin-token"
-    public_api_key: str = "public-demo-key"
+    admin_token: str = DEFAULT_ADMIN_TOKEN
+    public_api_key: str = DEFAULT_PUBLIC_API_KEY
+    legacy_admin_token_enabled: bool = True
+    legacy_public_api_key_enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if not _legacy_secret_enabled(self.admin_token, DEFAULT_ADMIN_TOKEN):
+            self.legacy_admin_token_enabled = False
+        if not _legacy_secret_enabled(self.public_api_key, DEFAULT_PUBLIC_API_KEY):
+            self.legacy_public_api_key_enabled = False
 
     @property
     def raw_dir(self) -> Path:
@@ -64,7 +78,44 @@ class Settings:
             self.manifests_dir,
             self.tmp_dir,
         ):
-            path.mkdir(parents=True, exist_ok=True)
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            _chmod_private(path, directory=True)
+
+    def externally_bound(self) -> bool:
+        return _host_exposes_network(self.host)
+
+    def insecure_runtime_defaults(self, *, bootstrap_admin_pending: bool) -> list[str]:
+        findings: list[str] = []
+        if bootstrap_admin_pending and self.bootstrap_admin_password == DEFAULT_BOOTSTRAP_ADMIN_PASSWORD:
+            findings.append("BOOTSTRAP_ADMIN_PASSWORD")
+        if self.legacy_admin_token_enabled and self.admin_token == DEFAULT_ADMIN_TOKEN:
+            findings.append("ADMIN_TOKEN")
+        if self.legacy_public_api_key_enabled and self.public_api_key == DEFAULT_PUBLIC_API_KEY:
+            findings.append("PUBLIC_API_KEY")
+        return findings
+
+
+def _chmod_private(path: Path, *, directory: bool = False) -> None:
+    try:
+        path.chmod(0o700 if directory else 0o600)
+    except OSError:
+        return
+
+
+def _host_exposes_network(host: str) -> bool:
+    normalized = (host or "").strip().strip("[]").lower()
+    if normalized in {"", "localhost"}:
+        return False
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return True
+    return not address.is_loopback
+
+
+def _legacy_secret_enabled(value: str, default: str) -> bool:
+    text = value.strip()
+    return bool(text) and text != default
 
 
 def _load_dotenv(dotenv_path: Path) -> dict[str, str]:
@@ -122,6 +173,8 @@ def _coerce_bool(raw: dict[str, str], key: str, default: bool) -> bool:
 def default_settings(base_dir: Path) -> Settings:
     dotenv_values = _load_dotenv(base_dir / ".env")
     merged = {**dotenv_values, **os.environ}
+    admin_token = _coerce_str(merged, "ADMIN_TOKEN", DEFAULT_ADMIN_TOKEN)
+    public_api_key = _coerce_str(merged, "PUBLIC_API_KEY", DEFAULT_PUBLIC_API_KEY)
 
     storage_root = _resolve_path(
         merged.get("STORAGE_ROOT"),
@@ -138,7 +191,7 @@ def default_settings(base_dir: Path) -> Settings:
         storage_root=storage_root,
         database_path=database_path,
         bootstrap_admin_username=_coerce_str(merged, "BOOTSTRAP_ADMIN_USERNAME", "admin"),
-        bootstrap_admin_password=_coerce_str(merged, "BOOTSTRAP_ADMIN_PASSWORD", "change-me-now"),
+        bootstrap_admin_password=_coerce_str(merged, "BOOTSTRAP_ADMIN_PASSWORD", DEFAULT_BOOTSTRAP_ADMIN_PASSWORD),
         session_cookie_name=_coerce_str(merged, "SESSION_COOKIE_NAME", "rapid_inbox_session"),
         host=_coerce_str(merged, "HOST", "127.0.0.1"),
         port=_coerce_int(merged, "PORT", 8000),
@@ -158,6 +211,8 @@ def default_settings(base_dir: Path) -> Settings:
         parse_worker_count=_coerce_int(merged, "PARSE_WORKER_COUNT", 4),
         fsync_storage_writes=_coerce_bool(merged, "FSYNC_STORAGE_WRITES", False),
         disk_warning_threshold_percent=_coerce_int(merged, "DISK_WARNING_THRESHOLD_PERCENT", 85),
-        admin_token=_coerce_str(merged, "ADMIN_TOKEN", "dev-admin-token"),
-        public_api_key=_coerce_str(merged, "PUBLIC_API_KEY", "public-demo-key"),
+        admin_token=admin_token,
+        public_api_key=public_api_key,
+        legacy_admin_token_enabled=_legacy_secret_enabled(admin_token, DEFAULT_ADMIN_TOKEN),
+        legacy_public_api_key_enabled=_legacy_secret_enabled(public_api_key, DEFAULT_PUBLIC_API_KEY),
     )

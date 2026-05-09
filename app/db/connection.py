@@ -22,11 +22,24 @@ def apply_pragmas(connection: sqlite3.Connection) -> None:
 
 
 def initialize_database(database_path: Path) -> None:
-    database_path.parent.mkdir(parents=True, exist_ok=True)
+    database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _chmod_private(database_path.parent, directory=True)
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     with connect_database(database_path) as connection:
         connection.executescript(schema)
         _apply_lightweight_migrations(connection)
+    _chmod_private(database_path)
+    _chmod_private(Path(f"{database_path}-wal"))
+    _chmod_private(Path(f"{database_path}-shm"))
+
+
+def _chmod_private(path: Path, *, directory: bool = False) -> None:
+    if not path.exists():
+        return
+    try:
+        path.chmod(0o700 if directory else 0o600)
+    except OSError:
+        return
 
 
 def _column_names(connection: sqlite3.Connection, table_name: str) -> set[str]:
