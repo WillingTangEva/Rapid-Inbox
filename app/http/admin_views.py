@@ -143,6 +143,28 @@ def _form_bool(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_optional_query_int(value: str | None, *, field_name: str) -> int | None:
+    text = _parse_nullable_text(value)
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid {field_name}") from exc
+
+
+def _parse_optional_query_bool(value: str | None, *, field_name: str) -> bool | None:
+    text = _parse_nullable_text(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid {field_name}")
+
+
 def _parse_csv_values(value: str | None) -> list[str]:
     if value is None:
         return []
@@ -1212,33 +1234,38 @@ async def mailboxes_page(
     limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(default=0, ge=0, le=1_000_000),
     q: str | None = Query(default=None),
-    domain_id: int | None = Query(default=None),
-    public_enabled: bool | None = Query(default=None),
-    is_hidden: bool | None = Query(default=None),
+    domain_id: str | None = Query(default=None),
+    public_enabled: str | None = Query(default=None),
+    is_hidden: str | None = Query(default=None),
 ) -> Response:
     admin_or_response = await _require_admin(request)
     if isinstance(admin_or_response, Response):
         return admin_or_response
 
+    query = _parse_nullable_text(q)
+    domain_filter = _parse_optional_query_int(domain_id, field_name="domain_id")
+    public_enabled_filter = _parse_optional_query_bool(public_enabled, field_name="public_enabled")
+    is_hidden_filter = _parse_optional_query_bool(is_hidden, field_name="is_hidden")
+
     mailboxes = request.app.state.runtime.mailboxes.list_mailboxes(
         limit=limit,
         offset=offset,
-        query=q,
-        domain_id=domain_id,
-        public_enabled=public_enabled,
-        is_hidden=is_hidden,
+        query=query,
+        domain_id=domain_filter,
+        public_enabled=public_enabled_filter,
+        is_hidden=is_hidden_filter,
     )["items"]
     total_count = request.app.state.runtime.mailboxes.count_mailboxes(
-        query=q,
-        domain_id=domain_id,
-        public_enabled=public_enabled,
-        is_hidden=is_hidden,
+        query=query,
+        domain_id=domain_filter,
+        public_enabled=public_enabled_filter,
+        is_hidden=is_hidden_filter,
     )
     filters = {
-        "q": q or "",
-        "domain_id": "" if domain_id is None else str(domain_id),
-        "public_enabled": "" if public_enabled is None else str(int(public_enabled)),
-        "is_hidden": "" if is_hidden is None else str(int(is_hidden)),
+        "q": query or "",
+        "domain_id": "" if domain_filter is None else str(domain_filter),
+        "public_enabled": "" if public_enabled_filter is None else str(int(public_enabled_filter)),
+        "is_hidden": "" if is_hidden_filter is None else str(int(is_hidden_filter)),
     }
     return _render(
         request,

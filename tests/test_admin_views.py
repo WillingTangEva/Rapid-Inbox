@@ -244,6 +244,23 @@ async def test_admin_mailboxes_page_can_toggle_visibility_via_form(app_client, r
 
 
 @pytest.mark.asyncio
+async def test_admin_mailboxes_filter_form_accepts_empty_values(app_client, runtime) -> None:
+    domain = await runtime.create_domain("adb.com")
+    await _login_and_change_initial_password(app_client, runtime)
+
+    blank_filters = await app_client.get(
+        "/admin/mailboxes?q=&domain_id=&public_enabled=&is_hidden=&limit=20"
+    )
+    domain_filter = await app_client.get(
+        f"/admin/mailboxes?q=&domain_id={domain['id']}&public_enabled=&is_hidden=&limit=20"
+    )
+
+    assert blank_filters.status_code == 200
+    assert domain_filter.status_code == 200
+    assert f'value="{domain["id"]}" selected' in domain_filter.text
+
+
+@pytest.mark.asyncio
 async def test_admin_api_keys_page_can_create_and_revoke_via_form(app_client, runtime) -> None:
     await _login_and_change_initial_password(app_client, runtime)
     created = await app_client.post(
