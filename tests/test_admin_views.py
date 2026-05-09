@@ -488,6 +488,10 @@ async def test_admin_api_keys_page_uses_checkbox_scopes_and_domain_hints(app_cli
     assert "授权所有可用域名" in response.text
     assert "公开邮件读取" in response.text
     assert "adb.com" in response.text
+    assert 'id="create-key-form" class="drawer__form"' in response.text
+    assert ".drawer__form" in response.text
+    assert "min-height: 0;" in response.text
+    assert "-webkit-overflow-scrolling: touch;" in response.text
 
 
 @pytest.mark.asyncio
