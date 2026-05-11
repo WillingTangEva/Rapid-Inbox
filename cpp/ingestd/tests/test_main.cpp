@@ -12,9 +12,13 @@ inline void check(bool condition, const std::string& message) {
 }
 }
 
+void test_config_defaults();
+void test_config_dotenv_and_environment_override();
+
 int main() {
     try {
-        test::check(true, "test harness must run");
+        test_config_defaults();
+        test_config_dotenv_and_environment_override();
         std::cout << "ingestd_tests ok\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& exc) {
