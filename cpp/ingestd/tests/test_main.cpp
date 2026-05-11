@@ -19,6 +19,9 @@ void test_ids_have_expected_prefixes();
 void test_sha256_known_digest();
 void test_storage_paths_match_python_layout();
 void test_json_escape();
+void test_domain_matcher_exact_subdomain_and_longest_suffix();
+void test_domain_matcher_plus_and_case_modes();
+void test_domain_matcher_normalizes_unicode_domain_to_idna();
 
 int main() {
     try {
@@ -29,6 +32,9 @@ int main() {
         test_sha256_known_digest();
         test_storage_paths_match_python_layout();
         test_json_escape();
+        test_domain_matcher_exact_subdomain_and_longest_suffix();
+        test_domain_matcher_plus_and_case_modes();
+        test_domain_matcher_normalizes_unicode_domain_to_idna();
         std::cout << "ingestd_tests ok\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& exc) {
