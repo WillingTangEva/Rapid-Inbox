@@ -10,6 +10,11 @@ find_package(OpenSSL REQUIRED)
 
 set(INGESTD_LIB_SOURCES
     src/config.cpp
+    src/id.cpp
+    src/json_util.cpp
+    src/sha256.cpp
+    src/storage_path.cpp
+    src/time_utils.cpp
 )
 
 set(INGESTD_SOURCES
@@ -28,6 +33,7 @@ target_link_libraries(rapid-inbox-ingestd PRIVATE ingestd_core)
 add_executable(ingestd_tests
     tests/test_main.cpp
     tests/test_config.cpp
+    tests/test_storage_utils.cpp
 )
 target_compile_options(ingestd_tests PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(ingestd_tests PRIVATE ingestd_core)
