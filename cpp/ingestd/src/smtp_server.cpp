@@ -173,11 +173,13 @@ void SmtpServer::stop() {
         close_fd(listen_fd_);
         listen_fd_ = -1;
     }
+    shutdown_active_clients();
 
     if (accept_thread_.joinable()) {
         accept_thread_.join();
     }
 
+    shutdown_active_clients();
     for (std::thread& thread : client_threads_) {
         if (thread.joinable()) {
             thread.join();
@@ -206,9 +208,10 @@ void SmtpServer::accept_loop() {
         }
 
         try {
+            register_client_fd(client_fd);
             client_threads_.emplace_back([this, client_fd] { handle_client(client_fd); });
         } catch (...) {
-            close_fd(client_fd);
+            close_client_fd(client_fd);
         }
     }
 }
@@ -223,7 +226,7 @@ void SmtpServer::handle_client(int client_fd) {
                         std::move(domain_policies));
 
     if (!send_line(client_fd, session.greeting())) {
-        close_fd(client_fd);
+        close_client_fd(client_fd);
         return;
     }
 
@@ -241,6 +244,26 @@ void SmtpServer::handle_client(int client_fd) {
         }
     }
 
+    close_client_fd(client_fd);
+}
+
+void SmtpServer::register_client_fd(int client_fd) {
+    const std::lock_guard lock(client_fds_mutex_);
+    active_client_fds_.insert(client_fd);
+}
+
+void SmtpServer::shutdown_active_clients() {
+    const std::lock_guard lock(client_fds_mutex_);
+    for (const int client_fd : active_client_fds_) {
+        (void)::shutdown(client_fd, SHUT_RDWR);
+    }
+}
+
+void SmtpServer::close_client_fd(int client_fd) {
+    {
+        const std::lock_guard lock(client_fds_mutex_);
+        active_client_fds_.erase(client_fd);
+    }
     (void)::shutdown(client_fd, SHUT_RDWR);
     close_fd(client_fd);
 }
