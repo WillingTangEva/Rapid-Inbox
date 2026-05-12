@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <utility>
 
 namespace rapid_inbox::ingestd {
 namespace {
@@ -45,10 +46,22 @@ SmtpSession::SmtpSession(const DomainMatcher& matcher,
                          MailQueue& queue,
                          int max_recipients,
                          std::size_t max_message_size_bytes)
+    : SmtpSession(matcher,
+                  queue,
+                  max_recipients,
+                  max_message_size_bytes,
+                  std::unordered_map<int, DomainPolicySnapshot>{}) {}
+
+SmtpSession::SmtpSession(const DomainMatcher& matcher,
+                         MailQueue& queue,
+                         int max_recipients,
+                         std::size_t max_message_size_bytes,
+                         std::unordered_map<int, DomainPolicySnapshot> domain_policies)
     : matcher_(matcher),
       queue_(queue),
       max_recipients_(max_recipients),
       max_message_size_bytes_(max_message_size_bytes),
+      domain_policies_(std::move(domain_policies)),
       session_id_(make_prefixed_id("smtp_")) {}
 
 std::string SmtpSession::greeting() const {
@@ -120,8 +133,13 @@ std::string SmtpSession::handle_command(const std::string& line) {
         if (!match.has_value()) {
             return "550 domain not allowed";
         }
+        std::optional<DomainPolicySnapshot> domain_policy;
+        const auto policy = domain_policies_.find(match->domain_id);
+        if (policy != domain_policies_.end()) {
+            domain_policy = policy->second;
+        }
         recipients_.push_back(
-            RecipientDelivery{make_prefixed_id("dlv_"), *value, *match, std::nullopt});
+            RecipientDelivery{make_prefixed_id("dlv_"), *value, *match, std::move(domain_policy)});
         return "250 OK";
     }
     if (matches_no_arg_command_ci(line, "DATA")) {

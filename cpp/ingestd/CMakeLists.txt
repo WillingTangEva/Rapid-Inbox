@@ -20,6 +20,7 @@ set(INGESTD_LIB_SOURCES
     src/json_util.cpp
     src/mail_queue.cpp
     src/sha256.cpp
+    src/smtp_server.cpp
     src/smtp_session.cpp
     src/sqlite_db.cpp
     src/storage_path.cpp

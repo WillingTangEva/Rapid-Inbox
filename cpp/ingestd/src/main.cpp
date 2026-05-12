@@ -1,5 +1,6 @@
 #include "config.h"
 #include "ingest_app.h"
+#include "smtp_server.h"
 
 #include <chrono>
 #include <exception>
@@ -34,9 +35,18 @@ int main(int argc, char** argv) {
             std::cout << "writer smoke ok\n";
             return 0;
         }
-        std::cout << "rapid-inbox-ingestd writer started; SMTP server is added in the next task\n";
-        app.stop_and_drain();
-        return 0;
+        rapid_inbox::ingestd::SmtpServer server(config.smtp_host,
+                                                config.smtp_port,
+                                                app.domains(),
+                                                app.queue(),
+                                                config.max_recipients_per_message,
+                                                config.max_message_size_bytes);
+        server.start();
+        std::cout << "rapid-inbox-ingestd listening on " << config.smtp_host << ":"
+                  << config.smtp_port << "\n";
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::hours(24));
+        }
     } catch (const std::exception& exc) {
         std::cerr << "rapid-inbox-ingestd failed: " << exc.what() << "\n";
         return 1;

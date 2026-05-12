@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace rapid_inbox::ingestd {
@@ -16,6 +17,11 @@ public:
                 MailQueue& queue,
                 int max_recipients,
                 std::size_t max_message_size_bytes);
+    SmtpSession(const DomainMatcher& matcher,
+                MailQueue& queue,
+                int max_recipients,
+                std::size_t max_message_size_bytes,
+                std::unordered_map<int, DomainPolicySnapshot> domain_policies);
 
     std::string greeting() const;
     std::string handle_line(const std::string& line);
@@ -30,6 +36,7 @@ private:
     MailQueue& queue_;
     int max_recipients_;
     std::size_t max_message_size_bytes_;
+    std::unordered_map<int, DomainPolicySnapshot> domain_policies_;
     std::string session_id_;
     std::string mail_from_;
     std::vector<RecipientDelivery> recipients_;

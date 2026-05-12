@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <string>
+#include <unordered_map>
 
 namespace test {
 void check(bool condition, const std::string& message);
@@ -24,6 +25,53 @@ void test_smtp_session_accepts_valid_message() {
     auto batch = queue.pop_batch(10, std::chrono::milliseconds(1));
     test::check(batch.size() == 1, "queued one job");
     test::check(batch[0].recipients[0].match.address_canonical == "code@adb.com", "canonical recipient");
+}
+
+void test_smtp_session_attaches_domain_policy_snapshot() {
+    rapid_inbox::ingestd::DomainMatcher matcher({{1, "adb.com", true, true, "strip", true}});
+    rapid_inbox::ingestd::DomainPolicySnapshot policy;
+    policy.root_domain_unicode = "ADB.COM";
+    policy.accept_exact = true;
+    policy.accept_subdomains = false;
+    policy.public_web_enabled = false;
+    policy.public_api_enabled = true;
+    policy.is_active = true;
+    policy.is_hidden = true;
+    policy.plus_addressing_mode = "strip";
+    policy.local_part_case_sensitive = true;
+    policy.max_message_size_bytes = 12345;
+    policy.retention_days = 7;
+    policy.dns_status = "warning";
+
+    rapid_inbox::ingestd::MailQueue queue(10);
+    rapid_inbox::ingestd::SmtpSession session(
+        matcher,
+        queue,
+        20,
+        1024 * 1024,
+        std::unordered_map<int, rapid_inbox::ingestd::DomainPolicySnapshot>{{1, policy}});
+
+    test::check(session.handle_line("MAIL FROM:<sender@example.com>") == "250 OK", "mail from");
+    test::check(session.handle_line("RCPT TO:<User+Tag@adb.com>") == "250 OK", "rcpt");
+    test::check(session.handle_line("DATA") == "354 End data with <CR><LF>.<CR><LF>", "data");
+    test::check(session.handle_line("Subject: Policy") == "", "body");
+    test::check(session.handle_line(".").rfind("250 queued as msg_", 0) == 0, "queued");
+
+    auto batch = queue.pop_batch(10, std::chrono::milliseconds(1));
+    test::check(batch.size() == 1, "queued one job");
+    test::check(batch[0].recipients.size() == 1, "queued one recipient");
+    const auto& snapshot = batch[0].recipients[0].domain_policy;
+    test::check(snapshot.has_value(), "recipient has domain policy");
+    test::check(snapshot->root_domain_unicode == "ADB.COM", "domain policy root unicode");
+    test::check(snapshot->accept_subdomains == false, "domain policy accept subdomains");
+    test::check(snapshot->public_web_enabled == false, "domain policy public web");
+    test::check(snapshot->is_hidden == true, "domain policy hidden");
+    test::check(snapshot->plus_addressing_mode == "strip", "domain policy plus mode");
+    test::check(snapshot->local_part_case_sensitive == true, "domain policy case mode");
+    test::check(snapshot->max_message_size_bytes == 12345, "domain policy max size");
+    test::check(snapshot->retention_days.has_value() && *snapshot->retention_days == 7,
+                "domain policy retention");
+    test::check(snapshot->dns_status == "warning", "domain policy dns");
 }
 
 void test_smtp_session_rejects_unknown_domain() {
