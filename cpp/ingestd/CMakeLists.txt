@@ -19,6 +19,7 @@ set(INGESTD_LIB_SOURCES
     src/ingest_app.cpp
     src/json_util.cpp
     src/mail_queue.cpp
+    src/mime_parser.cpp
     src/sha256.cpp
     src/smtp_server.cpp
     src/smtp_session.cpp
@@ -46,6 +47,7 @@ add_executable(ingestd_tests
     tests/test_domain_cache.cpp
     tests/test_domain_matcher.cpp
     tests/test_mail_queue.cpp
+    tests/test_mime_parser.cpp
     tests/test_smtp_server.cpp
     tests/test_smtp_session.cpp
     tests/test_batch_writer.cpp
