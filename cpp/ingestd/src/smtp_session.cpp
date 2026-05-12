@@ -30,12 +30,21 @@ bool matches_command_ci(const std::string& value, const std::string& command) {
            std::isspace(static_cast<unsigned char>(value[command.size()]));
 }
 
+bool matches_no_arg_command_ci(const std::string& value, const std::string& command) {
+    if (!starts_with_ci(value, command)) {
+        return false;
+    }
+    return std::all_of(value.begin() + static_cast<std::string::difference_type>(command.size()),
+                       value.end(),
+                       [](unsigned char ch) { return std::isspace(ch); });
+}
+
 }
 
 SmtpSession::SmtpSession(const DomainMatcher& matcher,
                          MailQueue& queue,
                          int max_recipients,
-                         int max_message_size_bytes)
+                         std::size_t max_message_size_bytes)
     : matcher_(matcher),
       queue_(queue),
       max_recipients_(max_recipients),
@@ -49,7 +58,14 @@ std::string SmtpSession::greeting() const {
 std::string SmtpSession::handle_line(const std::string& line) {
     if (in_data_) {
         if (line == ".") {
+            if (data_too_large_) {
+                clear_transaction_state();
+                return "";
+            }
             return finish_data();
+        }
+        if (data_too_large_) {
+            return "";
         }
         std::string content_line = line;
         if (!content_line.empty() && content_line[0] == '.') {
@@ -57,8 +73,8 @@ std::string SmtpSession::handle_line(const std::string& line) {
         }
         data_ += content_line;
         data_ += "\r\n";
-        if (static_cast<int>(data_.size()) > max_message_size_bytes_) {
-            in_data_ = false;
+        if (data_.size() > max_message_size_bytes_) {
+            data_too_large_ = true;
             data_.clear();
             return "552 message too large";
         }
@@ -71,23 +87,28 @@ std::string SmtpSession::handle_command(const std::string& line) {
     if (matches_command_ci(line, "EHLO") || matches_command_ci(line, "HELO")) {
         return "250 rapid-inbox-ingestd";
     }
-    if (matches_command_ci(line, "QUIT")) {
+    if (matches_no_arg_command_ci(line, "QUIT")) {
         return "221 2.0.0 Bye";
     }
-    if (matches_command_ci(line, "RSET")) {
-        mail_from_.clear();
-        recipients_.clear();
-        data_.clear();
-        in_data_ = false;
+    if (matches_no_arg_command_ci(line, "RSET")) {
+        clear_transaction_state();
         return "250 OK";
     }
     if (starts_with_ci(line, "MAIL FROM:")) {
         auto value = extract_path_argument(line);
-        mail_from_ = value.value_or("");
+        if (!value.has_value()) {
+            return "501 invalid sender";
+        }
+        mail_from_ = *value;
         recipients_.clear();
+        data_.clear();
+        data_too_large_ = false;
         return "250 OK";
     }
     if (starts_with_ci(line, "RCPT TO:")) {
+        if (mail_from_.empty()) {
+            return "503 need MAIL FROM first";
+        }
         if (static_cast<int>(recipients_.size()) >= max_recipients_) {
             return "552 too many recipients";
         }
@@ -103,11 +124,12 @@ std::string SmtpSession::handle_command(const std::string& line) {
             RecipientDelivery{make_prefixed_id("dlv_"), *value, *match, std::nullopt});
         return "250 OK";
     }
-    if (matches_command_ci(line, "DATA")) {
+    if (matches_no_arg_command_ci(line, "DATA")) {
         if (recipients_.empty()) {
             return "554 no valid recipients";
         }
         in_data_ = true;
+        data_too_large_ = false;
         data_.clear();
         return "354 End data with <CR><LF>.<CR><LF>";
     }
@@ -129,9 +151,19 @@ std::string SmtpSession::finish_data() {
     job.recipients = recipients_;
     data_.clear();
     if (!queue_.try_push(job)) {
+        clear_transaction_state();
         return "451 temporary queue full";
     }
+    clear_transaction_state();
     return "250 queued as " + job.message_id;
+}
+
+void SmtpSession::clear_transaction_state() {
+    mail_from_.clear();
+    recipients_.clear();
+    data_.clear();
+    in_data_ = false;
+    data_too_large_ = false;
 }
 
 std::optional<std::string> SmtpSession::extract_path_argument(const std::string& line) const {
@@ -147,7 +179,13 @@ std::optional<std::string> SmtpSession::extract_path_argument(const std::string&
         return !std::isspace(ch);
     }).base(),
                 value.end());
-    if (value.size() >= 2 && value.front() == '<' && value.back() == '>') {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    if (value.front() == '<' || value.back() == '>') {
+        if (value.size() < 2 || value.front() != '<' || value.back() != '>') {
+            return std::nullopt;
+        }
         value = value.substr(1, value.size() - 2);
     }
     return value.empty() ? std::nullopt : std::optional<std::string>(value);
