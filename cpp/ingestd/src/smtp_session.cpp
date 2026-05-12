@@ -22,6 +22,14 @@ bool starts_with_ci(const std::string& value, const std::string& prefix) {
     return upper_ascii(value.substr(0, prefix.size())) == upper_ascii(prefix);
 }
 
+bool matches_command_ci(const std::string& value, const std::string& command) {
+    if (!starts_with_ci(value, command)) {
+        return false;
+    }
+    return value.size() == command.size() ||
+           std::isspace(static_cast<unsigned char>(value[command.size()]));
+}
+
 }
 
 SmtpSession::SmtpSession(const DomainMatcher& matcher,
@@ -60,13 +68,13 @@ std::string SmtpSession::handle_line(const std::string& line) {
 }
 
 std::string SmtpSession::handle_command(const std::string& line) {
-    if (starts_with_ci(line, "EHLO") || starts_with_ci(line, "HELO")) {
+    if (matches_command_ci(line, "EHLO") || matches_command_ci(line, "HELO")) {
         return "250 rapid-inbox-ingestd";
     }
-    if (starts_with_ci(line, "QUIT")) {
+    if (matches_command_ci(line, "QUIT")) {
         return "221 2.0.0 Bye";
     }
-    if (starts_with_ci(line, "RSET")) {
+    if (matches_command_ci(line, "RSET")) {
         mail_from_.clear();
         recipients_.clear();
         data_.clear();
@@ -95,7 +103,7 @@ std::string SmtpSession::handle_command(const std::string& line) {
             RecipientDelivery{make_prefixed_id("dlv_"), *value, *match, std::nullopt});
         return "250 OK";
     }
-    if (starts_with_ci(line, "DATA")) {
+    if (matches_command_ci(line, "DATA")) {
         if (recipients_.empty()) {
             return "554 no valid recipients";
         }
