@@ -27,6 +27,7 @@ void test_domain_cache_respects_matcher_flags();
 void test_domain_cache_loads_plus_and_case_modes();
 void test_domain_cache_reload_sees_rule_changes();
 void test_domain_cache_snapshots_domain_policies();
+void test_domain_cache_snapshots_matcher_and_policies_together();
 void test_sqlite_db_applies_pragmas();
 void test_sqlite_db_rejects_database_without_wal();
 void test_sqlite_db_cleans_up_after_constructor_failure();
@@ -72,6 +73,7 @@ int main() {
         test_domain_cache_loads_plus_and_case_modes();
         test_domain_cache_reload_sees_rule_changes();
         test_domain_cache_snapshots_domain_policies();
+        test_domain_cache_snapshots_matcher_and_policies_together();
         test_sqlite_db_applies_pragmas();
         test_sqlite_db_rejects_database_without_wal();
         test_sqlite_db_cleans_up_after_constructor_failure();

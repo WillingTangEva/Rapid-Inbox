@@ -179,3 +179,26 @@ void test_domain_cache_snapshots_domain_policies() {
                 "policy retention");
     test::check(found->second.dns_status == "warning", "policy dns status");
 }
+
+void test_domain_cache_snapshots_matcher_and_policies_together() {
+    const fs::path db_path = fresh_db_path("rapid-inbox-domain-cache-rules-snapshot.sqlite");
+    SqliteDb db(db_path, 5000);
+    create_domains_table(db);
+    db.exec("INSERT INTO domains (id, root_domain_ascii, root_domain_unicode, is_active, "
+            "plus_addressing_mode) VALUES (1, 'snapshot.test', 'Snapshot.Test', 1, 'strip')");
+
+    DomainCache cache(db_path, 5000);
+    cache.reload();
+
+    const auto snapshot = cache.snapshot_rules();
+    const auto match = snapshot.matcher.match_address("Code+Tag@snapshot.test");
+    test::check(match.has_value(), "snapshot matcher matches loaded domain");
+    test::check(match->domain_id == 1, "snapshot matcher domain id");
+    test::check(match->address_canonical == "code@snapshot.test", "snapshot matcher flags");
+    const auto policy = snapshot.policies.find(match->domain_id);
+    test::check(policy != snapshot.policies.end(), "snapshot policy matches matcher domain id");
+    test::check(policy->second.root_domain_unicode == "Snapshot.Test",
+                "snapshot policy from same rules snapshot");
+    test::check(policy->second.plus_addressing_mode == "strip",
+                "snapshot policy keeps same rule fields");
+}

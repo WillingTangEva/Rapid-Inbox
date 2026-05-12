@@ -137,6 +137,11 @@ std::optional<DomainMatch> DomainCache::match_address(const std::string& address
     return matcher_.match_address(address);
 }
 
+DomainRulesSnapshot DomainCache::snapshot_rules() const {
+    const std::lock_guard lock(mutex_);
+    return DomainRulesSnapshot{matcher_, domain_policies_};
+}
+
 DomainMatcher DomainCache::snapshot_matcher() const {
     const std::lock_guard lock(mutex_);
     return matcher_;

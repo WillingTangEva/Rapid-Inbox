@@ -11,6 +11,11 @@
 
 namespace rapid_inbox::ingestd {
 
+struct DomainRulesSnapshot {
+    DomainMatcher matcher;
+    std::unordered_map<int, DomainPolicySnapshot> policies;
+};
+
 class DomainCache {
 public:
     DomainCache(std::filesystem::path database_path, int busy_timeout_ms);
@@ -20,6 +25,7 @@ public:
 
     void reload();
     std::optional<DomainMatch> match_address(const std::string& address) const;
+    DomainRulesSnapshot snapshot_rules() const;
     DomainMatcher snapshot_matcher() const;
     std::unordered_map<int, DomainPolicySnapshot> snapshot_policies() const;
 

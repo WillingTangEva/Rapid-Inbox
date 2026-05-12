@@ -217,13 +217,12 @@ void SmtpServer::accept_loop() {
 }
 
 void SmtpServer::handle_client(int client_fd) {
-    DomainMatcher matcher = domains_.snapshot_matcher();
-    auto domain_policies = domains_.snapshot_policies();
-    SmtpSession session(matcher,
+    auto domain_rules = domains_.snapshot_rules();
+    SmtpSession session(domain_rules.matcher,
                         queue_,
                         max_recipients_,
                         static_cast<std::size_t>(max_message_size_bytes_),
-                        std::move(domain_policies));
+                        std::move(domain_rules.policies));
 
     if (!send_line(client_fd, session.greeting())) {
         close_client_fd(client_fd);
