@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -215,5 +216,76 @@ async def test_placeholder_insert_and_parse_roundtrip(tmp_path, sample_email_byt
         assert detail["html_body"].startswith("<html>")
         assert detail["from_addr"] == "sender@example.com"
         assert any(settings.raw_dir.rglob("*.eml"))
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_parses_pending_messages_written_by_external_ingest_process(
+    tmp_path,
+    sample_email_bytes: bytes,
+) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        received_at = "2026-04-18T20:00:00Z"
+        message_id = "msg_external_ingest_pending"
+        raw_path, raw_sha256, raw_size_bytes = runtime.storage.write_raw_message(
+            message_id,
+            received_at,
+            sample_email_bytes,
+        )
+
+        with connect_database(settings.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO messages (
+                    id,
+                    raw_path,
+                    raw_sha256,
+                    raw_size_bytes,
+                    envelope_from,
+                    from_addr,
+                    received_at,
+                    parse_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+                """,
+                (
+                    message_id,
+                    raw_path,
+                    raw_sha256,
+                    raw_size_bytes,
+                    "sender@example.com",
+                    "sender@example.com",
+                    received_at,
+                ),
+            )
+            connection.commit()
+
+        deadline = asyncio.get_running_loop().time() + 2
+        row = None
+        while asyncio.get_running_loop().time() < deadline:
+            with connect_database(settings.database_path) as connection:
+                row = connection.execute(
+                    """
+                    SELECT parse_status, subject, text_preview
+                    FROM messages
+                    WHERE id = ?
+                    """,
+                    (message_id,),
+                ).fetchone()
+            if row is not None and row["parse_status"] == "parsed":
+                break
+            await asyncio.sleep(0.05)
+
+        assert row is not None
+        assert row["parse_status"] == "parsed"
+        assert row["subject"] == "Hello Rapid Inbox"
+        assert row["text_preview"].startswith("Hello from tests.")
     finally:
         await runtime.stop()

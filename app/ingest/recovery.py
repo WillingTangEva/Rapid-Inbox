@@ -4,7 +4,6 @@ import json
 from typing import TYPE_CHECKING
 
 from app.db.connection import connect_database
-from app.ingest.queue import ParseTask
 
 if TYPE_CHECKING:
     from app.runtime import RapidInboxRuntime
@@ -24,6 +23,7 @@ class RecoveryScanner:
         policy_manifests: list[dict[str, object]] = []
         legacy_manifests: list[dict[str, object]] = []
         latest_policy_snapshots: dict[int, dict[str, object]] = {}
+        recovered_message_ids: list[str] = []
         for manifest_path in sorted(self.runtime.settings.manifests_dir.rglob("*.json")):
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -49,10 +49,16 @@ class RecoveryScanner:
             except ValueError:
                 # Legacy manifests can remain unrecoverable if the matching domain never reappears.
                 continue
+            message_id = manifest.get("message_id")
+            if isinstance(message_id, str) and message_id:
+                recovered_message_ids.append(message_id)
+
+        for message_id in recovered_message_ids:
+            await self.runtime.enqueue_message_for_parse(message_id)
 
     async def _requeue_unparsed_messages(self) -> None:
-        for message_id in await self.runtime.find_messages_for_reparse():
-            await self.runtime.parse_queue.enqueue(ParseTask(message_id=message_id))
+        for message_id in await self.runtime.find_messages_for_reparse(statuses=("failed",)):
+            await self.runtime.enqueue_message_for_parse(message_id)
 
     def _database_needs_manifest_recovery(self) -> bool:
         with connect_database(self.runtime.settings.database_path) as connection:

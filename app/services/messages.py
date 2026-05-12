@@ -8,7 +8,6 @@ from typing import Any
 
 from app.db.connection import connect_database
 from app.ingest.storage import utc_now
-from app.ingest.queue import ParseTask
 from app.services.verification_code import extract_verification_code
 
 
@@ -78,7 +77,7 @@ class MessageService:
         updated_rows = await self._runtime.writer.execute(operation)
         if updated_rows == 0:
             raise LookupError("message not found")
-        await self._runtime.parse_queue.enqueue(ParseTask(message_id=message_id))
+        await self._runtime.enqueue_message_for_parse(message_id)
 
     def list_messages(
         self,

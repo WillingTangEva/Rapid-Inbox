@@ -34,6 +34,8 @@ from app.smtp.matcher import DomainMatcher, DomainRule
 MESSAGE_RETENTION_SECONDS = 10 * 60
 MESSAGE_RETENTION_CLEANUP_INTERVAL_SECONDS = 30
 METRIC_RETENTION_SECONDS = 48 * 60 * 60
+PENDING_PARSE_SCAN_INTERVAL_SECONDS = 0.5
+PENDING_PARSE_SCAN_BATCH_SIZE = 5000
 
 
 class RapidInboxRuntime:
@@ -56,6 +58,8 @@ class RapidInboxRuntime:
         self._active_smtp_connections: dict[str, str] = {}
         self._smtp_ip_windows: dict[str, deque[float]] = {}
         self._retention_cleanup_task: asyncio.Task[None] | None = None
+        self._pending_parse_scan_task: asyncio.Task[None] | None = None
+        self._queued_parse_message_ids: set[str] = set()
         self.live_state = LiveState()
         self.recovery = RecoveryScanner(self)
 
@@ -76,8 +80,13 @@ class RapidInboxRuntime:
         await self.recovery.run()
         self.domains.reload()
         self._retention_cleanup_task = asyncio.create_task(self._message_retention_loop())
+        self._pending_parse_scan_task = asyncio.create_task(self._pending_parse_scan_loop())
 
     async def stop(self) -> None:
+        try:
+            await self._stop_pending_parse_scan_loop()
+        except asyncio.CancelledError:
+            pass
         try:
             await self._stop_message_retention_loop()
         except asyncio.CancelledError:
@@ -86,6 +95,7 @@ class RapidInboxRuntime:
             await self.parse_queue.stop(discard_pending=True, timeout=5.0)
         except asyncio.CancelledError:
             pass
+        self._queued_parse_message_ids.clear()
         with self._smtp_connection_lock:
             self._active_smtp_connections.clear()
             self._smtp_ip_windows.clear()
@@ -198,6 +208,27 @@ class RapidInboxRuntime:
         if task is None:
             return
         self._retention_cleanup_task = None
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _pending_parse_scan_loop(self) -> None:
+        while True:
+            await asyncio.sleep(PENDING_PARSE_SCAN_INTERVAL_SECONDS)
+            try:
+                await self.requeue_pending_messages_for_parse()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                continue
+
+    async def _stop_pending_parse_scan_loop(self) -> None:
+        task = self._pending_parse_scan_task
+        if task is None:
+            return
+        self._pending_parse_scan_task = None
         task.cancel()
         try:
             await task
@@ -1055,7 +1086,7 @@ class RapidInboxRuntime:
         delivery_events = await self.writer.execute(operation)
         for event in delivery_events:
             await self.live_state.publish({**event, "type": "mailbox_delivery"})
-        await self.parse_queue.enqueue(ParseTask(message_id=message_id))
+        await self.enqueue_message_for_parse(message_id)
         return f"250 queued as {message_id}"
 
     def _write_accept_artifacts(
@@ -1070,6 +1101,28 @@ class RapidInboxRuntime:
 
     async def drain_parser_queue(self) -> None:
         await self.parse_queue.drain()
+
+    async def enqueue_message_for_parse(self, message_id: str) -> bool:
+        if message_id in self._queued_parse_message_ids:
+            return False
+        self._queued_parse_message_ids.add(message_id)
+        try:
+            await self.parse_queue.enqueue(ParseTask(message_id=message_id))
+        except Exception:
+            self._queued_parse_message_ids.discard(message_id)
+            raise
+        return True
+
+    async def requeue_pending_messages_for_parse(self) -> int:
+        queued = 0
+        for message_id in await self.find_messages_for_reparse(
+            statuses=("pending",),
+            newest_first=True,
+            limit=PENDING_PARSE_SCAN_BATCH_SIZE,
+        ):
+            if await self.enqueue_message_for_parse(message_id):
+                queued += 1
+        return queued
 
     async def recover_from_manifest(self, manifest: dict[str, Any]) -> None:
         await self.writer.execute(lambda connection: self._apply_recovery_manifest(connection, manifest))
@@ -1225,15 +1278,31 @@ class RapidInboxRuntime:
         if domain_policy["dns_status"] not in {"unknown", "ok", "warning", "error"}:
             raise ValueError("invalid recovery manifest")
 
-    async def find_messages_for_reparse(self) -> list[str]:
+    async def find_messages_for_reparse(
+        self,
+        *,
+        statuses: tuple[str, ...] = ("pending", "failed"),
+        newest_first: bool = False,
+        limit: int | None = None,
+    ) -> list[str]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        limit_sql = "" if limit is None else "LIMIT ?"
+        order_sql = "ORDER BY received_at DESC, id DESC" if newest_first else "ORDER BY received_at ASC, id ASC"
+        params: list[Any] = list(statuses)
+        if limit is not None:
+            params.append(int(limit))
         with connect_database(self.settings.database_path) as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT id
                 FROM messages
-                WHERE parse_status IN ('pending', 'failed')
-                ORDER BY received_at ASC, id ASC
-                """
+                WHERE parse_status IN ({placeholders})
+                {order_sql}
+                {limit_sql}
+                """,
+                tuple(params),
             ).fetchall()
         return [str(row["id"]) for row in rows]
 
@@ -1478,44 +1547,47 @@ class RapidInboxRuntime:
         return self.storage.read_bytes(row["raw_path"])
 
     async def _parse_message(self, task: ParseTask) -> None:
-        with connect_database(self.settings.database_path) as connection:
-            message_row = connection.execute(
-                "SELECT raw_path, received_at FROM messages WHERE id = ?",
-                (task.message_id,),
-            ).fetchone()
-        if message_row is None:
-            return
-
         try:
-            raw_bytes = await asyncio.to_thread(self.storage.read_bytes, message_row["raw_path"])
-        except Exception as exc:
+            with connect_database(self.settings.database_path) as connection:
+                message_row = connection.execute(
+                    "SELECT raw_path, received_at FROM messages WHERE id = ?",
+                    (task.message_id,),
+                ).fetchone()
+            if message_row is None:
+                return
+
+            try:
+                raw_bytes = await asyncio.to_thread(self.storage.read_bytes, message_row["raw_path"])
+            except Exception as exc:
+                attachment_paths = await self.writer.execute(
+                    lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
+                )
+                await asyncio.to_thread(self._delete_attachment_files, attachment_paths)
+                await self._publish_mailbox_delivery_updates(task.message_id)
+                return
+
+            try:
+                parsed = await asyncio.to_thread(
+                    self.parser.parse_message,
+                    task.message_id,
+                    raw_bytes,
+                    message_row["received_at"],
+                )
+            except Exception as exc:
+                attachment_paths = await self.writer.execute(
+                    lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
+                )
+                await asyncio.to_thread(self._delete_attachment_files, attachment_paths)
+                await self._publish_mailbox_delivery_updates(task.message_id)
+                return
+
             attachment_paths = await self.writer.execute(
-                lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
+                lambda connection: self._apply_parsed_message(connection, task.message_id, parsed)
             )
             await asyncio.to_thread(self._delete_attachment_files, attachment_paths)
             await self._publish_mailbox_delivery_updates(task.message_id)
-            return
-
-        try:
-            parsed = await asyncio.to_thread(
-                self.parser.parse_message,
-                task.message_id,
-                raw_bytes,
-                message_row["received_at"],
-            )
-        except Exception as exc:
-            attachment_paths = await self.writer.execute(
-                lambda connection: self._mark_message_parse_failed(connection, task.message_id, str(exc))
-            )
-            await asyncio.to_thread(self._delete_attachment_files, attachment_paths)
-            await self._publish_mailbox_delivery_updates(task.message_id)
-            return
-
-        attachment_paths = await self.writer.execute(
-            lambda connection: self._apply_parsed_message(connection, task.message_id, parsed)
-        )
-        await asyncio.to_thread(self._delete_attachment_files, attachment_paths)
-        await self._publish_mailbox_delivery_updates(task.message_id)
+        finally:
+            self._queued_parse_message_ids.discard(task.message_id)
 
     def _apply_parsed_message(self, connection: sqlite3.Connection, message_id: str, parsed: ParsedMessage) -> list[str]:
         attachment_paths = self._collect_attachment_storage_paths(connection, message_id)
