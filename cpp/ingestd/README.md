@@ -2,10 +2,10 @@
 
 `rapid-inbox-ingestd` is the C++ SMTP ingest process for Rapid Inbox.
 
-Phase 1 accepts SMTP mail, returns `250 queued as <message_id>` after the
-message enters the in-memory queue, and batch-writes raw mail, recovery
-manifests, and SQLite pending records. The Python HTTP app remains responsible
-for admin/public UI and parsing pending messages.
+The ingest process accepts SMTP mail, queues it in memory, and batch-writes raw
+mail, recovery manifests, parsed text/html bodies, attachments, verification
+codes, and SQLite message/delivery rows. Python remains the HTTP/admin service
+and compatibility parser for old pending rows.
 
 ## Build
 

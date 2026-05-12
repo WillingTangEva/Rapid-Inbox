@@ -60,6 +60,11 @@ HTTP: 0.0.0.0:8000
 SMTP: 0.0.0.0:25
 ```
 
+The default quickstart starts the C++ SMTP ingest process on `0.0.0.0:25`.
+Parsed message metadata, text/html bodies, attachments, and verification codes
+are written by ingestd directly into the existing SQLite database and
+`storage/` tree. The Python service serves HTTP/admin/public APIs.
+
 打开管理后台：
 
 ```text
