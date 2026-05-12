@@ -10,6 +10,7 @@
 - 33 个验证码提取单元测试，覆盖真实邮件中常见的各种形态。
 - 邮件自动保留与过期清理能力。
 - C++ `rapid-inbox-ingestd` 高吞吐 SMTP 收件入口，保留 Python HTTP 后台与公开页面，并写入现有 SQLite/storage 数据契约。
+- `quickstart.sh` 一键快速开始脚本，自动准备 Python 环境、构建 C++ ingestd 并启动本地服务。
 
 ### 变更
 

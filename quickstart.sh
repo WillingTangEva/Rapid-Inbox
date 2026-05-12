@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv}"
+RUN_DIR="${RUN_DIR:-$ROOT_DIR/.rapid-inbox-run}"
+HTTP_HOST="${HTTP_HOST:-0.0.0.0}"
+HTTP_PORT="${HTTP_PORT:-8000}"
+SMTP_HOST="${SMTP_HOST:-0.0.0.0}"
+SMTP_PORT="${SMTP_PORT:-25}"
+INSTALL_EXTRAS="${INSTALL_EXTRAS:-1}"
+USE_CPP_INGESTD="${USE_CPP_INGESTD:-1}"
+
+usage() {
+    cat <<'EOF'
+Usage: bash quickstart.sh [--python-smtp] [--http-port PORT] [--smtp-port PORT] [--no-install]
+
+Starts Rapid Inbox with a one-command newbie flow.
+
+Default mode:
+  - Python HTTP bound to 0.0.0.0:8000
+  - C++ rapid-inbox-ingestd bound to 0.0.0.0:25
+
+Fallback mode:
+  - Pass --python-smtp to use the Python SMTP runner instead of C++ ingestd
+
+Open:
+  - Admin login: http://127.0.0.1:8000/admin/login
+EOF
+}
+
+die() {
+    printf 'quickstart: %s\n' "$*" >&2
+    exit 1
+}
+
+have_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+require_cmd() {
+    have_cmd "$1" || die "missing required command: $1"
+}
+
+dotenv_value() {
+    local key="$1"
+    if [ ! -f "$ROOT_DIR/.env" ]; then
+        return 0
+    fi
+    "$PYTHON_BIN" - "$ROOT_DIR/.env" "$key" <<'PY'
+import sys
+from pathlib import Path
+
+dotenv = Path(sys.argv[1])
+key = sys.argv[2]
+for raw_line in dotenv.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[7:].strip()
+    if "=" not in line:
+        continue
+    found_key, value = line.split("=", 1)
+    if found_key.strip() != key:
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    print(value)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+ensure_venv() {
+    if [ ! -x "$VENV_DIR/bin/python" ]; then
+        require_cmd python3
+        python3 -m venv "$VENV_DIR"
+    fi
+    PYTHON_BIN="$VENV_DIR/bin/python"
+    if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+        "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true
+    fi
+}
+
+install_python_deps() {
+    if [ "$INSTALL_EXTRAS" -ne 1 ]; then
+        return
+    fi
+    "$PYTHON_BIN" -m pip install -c "$ROOT_DIR/constraints-dev.txt" -e "$ROOT_DIR[dev]"
+}
+
+build_cpp_ingestd() {
+    require_cmd cmake
+    require_cmd c++
+    cmake -S "$ROOT_DIR/cpp/ingestd" -B "$ROOT_DIR/cpp/ingestd/build"
+    cmake --build "$ROOT_DIR/cpp/ingestd/build"
+}
+
+wait_for_tcp() {
+    local host="$1"
+    local port="$2"
+    local label="$3"
+    "$PYTHON_BIN" - "$host" "$port" "$label" <<'PY'
+import socket
+import sys
+import time
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+label = sys.argv[3]
+deadline = time.monotonic() + 30
+last_error = None
+while time.monotonic() < deadline:
+    with socket.socket() as sock:
+        sock.settimeout(0.5)
+        try:
+            sock.connect((host, port))
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.2)
+            continue
+        raise SystemExit(0)
+raise SystemExit(f"{label} did not become ready: {last_error}")
+PY
+}
+
+tail_logs_on_failure() {
+    printf '\n--- HTTP log ---\n' >&2
+    tail -n 80 "$RUN_DIR/http.log" >&2 || true
+    if [ "$USE_CPP_INGESTD" -eq 1 ]; then
+        printf '\n--- ingestd log ---\n' >&2
+        tail -n 80 "$RUN_DIR/ingestd.log" >&2 || true
+    fi
+}
+
+cleanup() {
+    local exit_code=$?
+    if [ -n "${HTTP_PID:-}" ] && kill -0 "$HTTP_PID" >/dev/null 2>&1; then
+        kill "$HTTP_PID" >/dev/null 2>&1 || true
+        wait "$HTTP_PID" >/dev/null 2>&1 || true
+    fi
+    if [ -n "${INGESTD_PID:-}" ] && kill -0 "$INGESTD_PID" >/dev/null 2>&1; then
+        kill "$INGESTD_PID" >/dev/null 2>&1 || true
+        wait "$INGESTD_PID" >/dev/null 2>&1 || true
+    fi
+    if [ "$exit_code" -ne 0 ]; then
+        tail_logs_on_failure
+    fi
+}
+
+handle_signal() {
+    trap - INT TERM
+    exit 0
+}
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    usage
+    exit 0
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --python-smtp)
+            USE_CPP_INGESTD=0
+            ;;
+        --http-port)
+            shift
+            [ $# -gt 0 ] || die "--http-port needs a value"
+            HTTP_PORT="$1"
+            ;;
+        --smtp-port)
+            shift
+            [ $# -gt 0 ] || die "--smtp-port needs a value"
+            SMTP_PORT="$1"
+            ;;
+        --no-install)
+            INSTALL_EXTRAS=0
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown option: $1"
+            ;;
+    esac
+    shift
+done
+
+trap cleanup EXIT
+trap handle_signal INT TERM
+
+require_cmd python3
+ensure_venv
+
+if [ ! -f "$ROOT_DIR/.env" ] && [ -f "$ROOT_DIR/.env.example" ]; then
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+fi
+
+if [ -z "${BOOTSTRAP_ADMIN_USERNAME:-}" ]; then
+    BOOTSTRAP_ADMIN_USERNAME="$(dotenv_value BOOTSTRAP_ADMIN_USERNAME || true)"
+fi
+if [ -z "${BOOTSTRAP_ADMIN_PASSWORD:-}" ]; then
+    BOOTSTRAP_ADMIN_PASSWORD="$(dotenv_value BOOTSTRAP_ADMIN_PASSWORD || true)"
+fi
+
+export HOST="$HTTP_HOST"
+export PORT="$HTTP_PORT"
+export SMTP_HOST="$SMTP_HOST"
+export SMTP_PORT="$SMTP_PORT"
+
+mkdir -p "$RUN_DIR"
+: > "$RUN_DIR/http.log"
+: > "$RUN_DIR/ingestd.log"
+
+install_python_deps
+
+if [ "$USE_CPP_INGESTD" -eq 1 ]; then
+    build_cpp_ingestd
+fi
+
+if [ "$USE_CPP_INGESTD" -eq 1 ]; then
+    "$VENV_DIR/bin/uvicorn" app.main:app --host "$HTTP_HOST" --port "$HTTP_PORT" > "$RUN_DIR/http.log" 2>&1 &
+    HTTP_PID=$!
+    "$ROOT_DIR/cpp/ingestd/build/rapid-inbox-ingestd" --base-dir "$ROOT_DIR" > "$RUN_DIR/ingestd.log" 2>&1 &
+    INGESTD_PID=$!
+else
+    "$VENV_DIR/bin/rapid-inbox-http" > "$RUN_DIR/http.log" 2>&1 &
+    HTTP_PID=$!
+fi
+
+WAIT_HTTP_HOST="$HTTP_HOST"
+if [ "$WAIT_HTTP_HOST" = "0.0.0.0" ] || [ "$WAIT_HTTP_HOST" = "::" ]; then
+    WAIT_HTTP_HOST="127.0.0.1"
+fi
+wait_for_tcp "$WAIT_HTTP_HOST" "$HTTP_PORT" "HTTP"
+if [ "$USE_CPP_INGESTD" -eq 1 ]; then
+    WAIT_SMTP_HOST="$SMTP_HOST"
+    if [ "$WAIT_SMTP_HOST" = "0.0.0.0" ] || [ "$WAIT_SMTP_HOST" = "::" ]; then
+        WAIT_SMTP_HOST="127.0.0.1"
+    fi
+    wait_for_tcp "$WAIT_SMTP_HOST" "$SMTP_PORT" "SMTP ingestd"
+fi
+
+printf 'Rapid Inbox is ready.\n'
+printf 'HTTP bound to: %s:%s\n' "$HTTP_HOST" "$HTTP_PORT"
+printf 'Admin login: http://127.0.0.1:%s/admin/login\n' "$HTTP_PORT"
+if [ "$USE_CPP_INGESTD" -eq 1 ]; then
+    printf 'SMTP ingestd bound to: %s:%s\n' "$SMTP_HOST" "$SMTP_PORT"
+else
+    printf 'SMTP runner: Python embedded SMTP bound to %s:%s\n' "$SMTP_HOST" "$SMTP_PORT"
+fi
+printf 'Press Ctrl+C to stop.\n'
+
+while true; do
+    if ! kill -0 "$HTTP_PID" >/dev/null 2>&1; then
+        die "HTTP process exited unexpectedly"
+    fi
+    if [ "$USE_CPP_INGESTD" -eq 1 ] && ! kill -0 "$INGESTD_PID" >/dev/null 2>&1; then
+        die "ingestd process exited unexpectedly"
+    fi
+    sleep 1
+done
