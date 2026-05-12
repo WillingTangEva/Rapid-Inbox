@@ -89,6 +89,10 @@ def _admin_form_csrf_required(request: Request) -> bool:
     return request.method.upper() in UNSAFE_METHODS and request.url.path.startswith("/admin")
 
 
+def _admin_form_csrf_exempt(request: Request) -> bool:
+    return request.url.path == "/admin/login"
+
+
 def create_app(*, settings: Settings | None = None, embed_smtp: bool = False) -> FastAPI:
     resolved_settings = settings or default_settings(Path.cwd())
     runtime = RapidInboxRuntime(resolved_settings)
@@ -126,7 +130,11 @@ def create_app(*, settings: Settings | None = None, embed_smtp: bool = False) ->
 
     @app.middleware("http")
     async def security_middleware(request: Request, call_next):
-        if _admin_form_csrf_required(request) and not _is_same_origin_admin_request(request):
+        if (
+            _admin_form_csrf_required(request)
+            and not _is_same_origin_admin_request(request)
+            and not _admin_form_csrf_exempt(request)
+        ):
             response = JSONResponse({"detail": "invalid origin"}, status_code=403)
             _apply_security_headers(request, response)
             return response

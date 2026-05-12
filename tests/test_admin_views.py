@@ -5,6 +5,7 @@ from itertools import count
 import re
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.db.connection import connect_database
@@ -53,6 +54,37 @@ async def test_admin_login_and_dashboard_page_flow(app_client, runtime) -> None:
     assert "高效、优雅的域名与邮件管控平台" in response.text
     assert "当前账号仍在使用初始密码" in response.text
     assert "修改管理员密码" in response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_login_allows_missing_origin_header(app_fixture, runtime) -> None:
+    app, _ = app_fixture
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/admin/login",
+            data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/settings?force_password_change=1"
+    assert response.cookies.get(runtime.settings.session_cookie_name) is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_login_allows_proxy_origin_mismatch(app_fixture, runtime) -> None:
+    app, _ = app_fixture
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/admin/login",
+            headers={"Origin": "https://forwarded-preview.example"},
+            data={"username": "admin", "password": runtime.settings.bootstrap_admin_password},
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/settings?force_password_change=1"
+    assert response.cookies.get(runtime.settings.session_cookie_name) is not None
 
 
 @pytest.mark.asyncio

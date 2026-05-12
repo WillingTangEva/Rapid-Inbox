@@ -9,7 +9,7 @@
 - 打分制验证码识别：支持中英日韩西多语言上下文提示、字母数字/分隔符组合（如 `123-456`、`A3F9B2`）和 HTML 富文本场景；对订单号、年份、电话号码、URL 中的数字更稳健地排除；两候选平分或出现「X or Y」歧义时主动弃权。
 - 33 个验证码提取单元测试，覆盖真实邮件中常见的各种形态。
 - 邮件自动保留与过期清理能力。
-- 规划并开始引入 C++ `rapid-inbox-ingestd` 高吞吐 SMTP 收件入口，保留 Python HTTP 后台与公开页面。
+- C++ `rapid-inbox-ingestd` 高吞吐 SMTP 收件入口，保留 Python HTTP 后台与公开页面，并写入现有 SQLite/storage 数据契约。
 
 ### 变更
 
@@ -25,6 +25,7 @@
 - 清理 SMTP per-IP 限流窗口中的过期条目，防止长期运行后内存缓慢增长。
 - 修正 `_apply_parsed_message` 中 INSERT attachment 的缩进风格。
 - 更正 README：邮件默认保留时间从 20 分钟修正为 10 分钟，与代码和测试一致。
+- 修复代理或预览环境下管理员登录可能被 Origin 校验误拦为 `invalid origin` 的问题。
 
 ## [0.1.0]
 
