@@ -4,13 +4,14 @@ import asyncio
 import hashlib
 import json
 import os
+import sqlite3
 import stat
 from types import SimpleNamespace
 
 import pytest
 
 from app.config import Settings
-from app.db.connection import connect_database
+from app.db.connection import connect_database, initialize_database
 from app.ingest.storage import FileStorage
 from app.runtime import RapidInboxRuntime
 
@@ -218,6 +219,88 @@ async def test_placeholder_insert_and_parse_roundtrip(tmp_path, sample_email_byt
         assert any(settings.raw_dir.rglob("*.eml"))
     finally:
         await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_python_fallback_parser_persists_verification_code(tmp_path) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+        result = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="noreply@openai.com",
+            content=(
+                b"From: OpenAI <noreply@openai.com>\r\n"
+                b"To: foo@adb.com\r\n"
+                b"Subject: Your OpenAI verification code\r\n"
+                b"Content-Type: text/plain; charset=utf-8\r\n"
+                b"\r\n"
+                b"Your verification code is 654321.\r\n"
+            ),
+        )
+        await runtime.drain_parser_queue()
+    finally:
+        await runtime.stop()
+
+    message_id = result.removeprefix("250 queued as ")
+    with connect_database(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT parse_status, verification_code FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+
+    assert row["parse_status"] == "parsed"
+    assert row["verification_code"] == "654321"
+
+
+def test_initialize_database_adds_verification_code_to_existing_messages_table(tmp_path) -> None:
+    database_path = tmp_path / "storage" / "app.db"
+    database_path.parent.mkdir(parents=True)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                smtp_session_id TEXT,
+                raw_path TEXT NOT NULL UNIQUE,
+                raw_sha256 TEXT NOT NULL,
+                raw_size_bytes INTEGER NOT NULL,
+                envelope_from TEXT,
+                message_id_header TEXT,
+                subject TEXT,
+                from_name TEXT,
+                from_addr TEXT,
+                reply_to TEXT,
+                date_header TEXT,
+                received_at TEXT NOT NULL,
+                indexed_at TEXT,
+                parse_status TEXT NOT NULL DEFAULT 'pending',
+                parse_error TEXT,
+                has_text INTEGER NOT NULL DEFAULT 0,
+                has_html INTEGER NOT NULL DEFAULT 0,
+                has_attachments INTEGER NOT NULL DEFAULT 0,
+                attachment_count INTEGER NOT NULL DEFAULT 0,
+                text_preview TEXT,
+                text_body_path TEXT,
+                html_body_path TEXT,
+                headers_json TEXT,
+                is_deleted_globally INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.commit()
+
+    initialize_database(database_path)
+
+    with connect_database(database_path) as connection:
+        columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(messages)").fetchall()}
+    assert "verification_code" in columns
 
 
 @pytest.mark.asyncio

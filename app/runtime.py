@@ -1610,7 +1610,8 @@ class RapidInboxRuntime:
                 text_preview = ?,
                 text_body_path = ?,
                 html_body_path = ?,
-                headers_json = ?
+                headers_json = ?,
+                verification_code = ?
             WHERE id = ?
             """,
             (
@@ -1629,6 +1630,7 @@ class RapidInboxRuntime:
                 parsed.text_body_path,
                 parsed.html_body_path,
                 parsed.headers_json,
+                parsed.verification_code,
                 message_id,
             ),
         )
@@ -1697,7 +1699,8 @@ class RapidInboxRuntime:
                 text_preview = NULL,
                 text_body_path = NULL,
                 html_body_path = NULL,
-                headers_json = NULL
+                headers_json = NULL,
+                verification_code = NULL
             WHERE id = ?
             """,
             (utc_now(), parse_error, message_id),

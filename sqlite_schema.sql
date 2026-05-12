@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS messages (
     text_body_path TEXT,
     html_body_path TEXT,
     headers_json TEXT,
+    verification_code TEXT,
     is_deleted_globally INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted_globally IN (0, 1)),
     FOREIGN KEY (smtp_session_id) REFERENCES smtp_sessions(id) ON DELETE SET NULL
 );

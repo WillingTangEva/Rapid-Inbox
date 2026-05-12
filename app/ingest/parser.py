@@ -11,6 +11,7 @@ from email.parser import BytesParser
 from email.utils import parseaddr
 
 from app.ingest.storage import FileStorage
+from app.services.verification_code import extract_verification_code
 
 
 def build_preview(text_body: str | None, html_body: str | None) -> str | None:
@@ -51,6 +52,7 @@ class ParsedMessage:
     html_body_path: str | None
     headers_json: str
     attachments: list[ParsedAttachment]
+    verification_code: str | None = None
 
 
 class MessageParser:
@@ -63,6 +65,14 @@ class MessageParser:
         text_path = self._storage.write_text_body(message_id, received_at, text_body) if text_body else None
         html_path = self._storage.write_html_body(message_id, received_at, html_body) if html_body else None
         from_name, from_addr = parseaddr(parsed.get("From", ""))
+        text_preview = build_preview(text_body, html_body)
+        verification_code = extract_verification_code(
+            subject=parsed.get("Subject"),
+            sender=from_addr or None,
+            text_body=text_body,
+            html_body=html_body,
+            preview=text_preview,
+        )
 
         return ParsedMessage(
             message_id_header=parsed.get("Message-ID"),
@@ -75,11 +85,12 @@ class MessageParser:
             has_html=html_body is not None,
             has_attachments=bool(attachments),
             attachment_count=len(attachments),
-            text_preview=build_preview(text_body, html_body),
+            text_preview=text_preview,
             text_body_path=text_path,
             html_body_path=html_path,
             headers_json=json.dumps(list(parsed.items()), ensure_ascii=False),
             attachments=attachments,
+            verification_code=verification_code,
         )
 
     def _extract_parts(self, message_id: str, parsed: EmailMessage) -> tuple[str | None, str | None, list[ParsedAttachment]]:

@@ -56,6 +56,14 @@ def _apply_lightweight_migrations(connection: sqlite3.Connection) -> None:
                 CHECK (must_change_password IN (0, 1))
             """
         )
+    message_columns = _column_names(connection, "messages")
+    if "verification_code" not in message_columns:
+        connection.execute(
+            """
+            ALTER TABLE messages
+            ADD COLUMN verification_code TEXT
+            """
+        )
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS mail_metric_buckets (
