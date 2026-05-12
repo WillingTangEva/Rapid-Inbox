@@ -35,6 +35,12 @@ void test_sqlite_statement_outliving_db_closes_connection();
 void test_mail_queue_capacity_and_close();
 void test_mail_queue_try_push_accepts_lvalues_and_rvalues();
 void test_mail_queue_close_wakes_waiting_pop_batch();
+void test_batch_writer_writes_raw_and_manifest();
+void test_batch_writer_writes_private_storage_permissions();
+void test_batch_writer_manifest_includes_domain_policy_snapshot();
+void test_batch_writer_missing_domain_policy_rejects_without_creating_database();
+void test_batch_writer_uses_job_policy_without_touching_database();
+void test_batch_writer_ignores_preexisting_part_symlinks();
 
 int main() {
     try {
@@ -61,6 +67,12 @@ int main() {
         test_mail_queue_capacity_and_close();
         test_mail_queue_try_push_accepts_lvalues_and_rvalues();
         test_mail_queue_close_wakes_waiting_pop_batch();
+        test_batch_writer_writes_raw_and_manifest();
+        test_batch_writer_writes_private_storage_permissions();
+        test_batch_writer_manifest_includes_domain_policy_snapshot();
+        test_batch_writer_missing_domain_policy_rejects_without_creating_database();
+        test_batch_writer_uses_job_policy_without_touching_database();
+        test_batch_writer_ignores_preexisting_part_symlinks();
         std::cout << "ingestd_tests ok\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& exc) {
