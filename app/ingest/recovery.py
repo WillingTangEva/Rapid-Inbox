@@ -14,16 +14,18 @@ class RecoveryScanner:
         self.runtime = runtime
 
     async def run(self) -> None:
+        recovered_final_message_ids: set[str] = set()
         if self._database_needs_manifest_recovery():
-            await self._recover_manifests()
+            recovered_final_message_ids = await self._recover_manifests()
 
-        await self._requeue_unparsed_messages()
+        await self._requeue_unparsed_messages(exclude_message_ids=recovered_final_message_ids)
 
-    async def _recover_manifests(self) -> None:
+    async def _recover_manifests(self) -> set[str]:
         policy_manifests: list[dict[str, object]] = []
         legacy_manifests: list[dict[str, object]] = []
         latest_policy_snapshots: dict[int, dict[str, object]] = {}
         recovered_message_ids: list[str] = []
+        recovered_final_message_ids: set[str] = set()
         for manifest_path in sorted(self.runtime.settings.manifests_dir.rglob("*.json")):
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -51,13 +53,21 @@ class RecoveryScanner:
                 continue
             message_id = manifest.get("message_id")
             if isinstance(message_id, str) and message_id:
-                recovered_message_ids.append(message_id)
+                parsed = manifest.get("parsed")
+                if isinstance(parsed, dict) and parsed.get("status") in {"parsed", "failed"}:
+                    recovered_final_message_ids.add(message_id)
+                else:
+                    recovered_message_ids.append(message_id)
 
         for message_id in recovered_message_ids:
             await self.runtime.enqueue_message_for_parse(message_id)
+        return recovered_final_message_ids
 
-    async def _requeue_unparsed_messages(self) -> None:
+    async def _requeue_unparsed_messages(self, *, exclude_message_ids: set[str] | None = None) -> None:
+        excluded = exclude_message_ids or set()
         for message_id in await self.runtime.find_messages_for_reparse(statuses=("failed",)):
+            if message_id in excluded:
+                continue
             await self.runtime.enqueue_message_for_parse(message_id)
 
     def _database_needs_manifest_recovery(self) -> bool:

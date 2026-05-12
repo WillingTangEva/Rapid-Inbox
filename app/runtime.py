@@ -1174,6 +1174,71 @@ class RapidInboxRuntime:
                 if not isinstance(rcpt_to, str):
                     raise ValueError("invalid recovery manifest")
 
+        parsed = manifest.get("parsed")
+        if parsed is not None:
+            self._validate_recovery_parsed_manifest(parsed)
+
+    def _validate_optional_manifest_string(self, parsed: dict[str, Any], key: str) -> None:
+        value = parsed.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("invalid recovery manifest")
+
+    def _validate_recovery_parsed_manifest(self, parsed: Any) -> None:
+        if not isinstance(parsed, dict):
+            raise ValueError("invalid recovery manifest")
+        status = parsed.get("status")
+        if status not in {"parsed", "failed"}:
+            raise ValueError("invalid recovery manifest")
+        if status == "failed":
+            if not isinstance(parsed.get("parse_error"), str) or not parsed["parse_error"]:
+                raise ValueError("invalid recovery manifest")
+            return
+
+        for key in ("has_text", "has_html", "has_attachments"):
+            if not isinstance(parsed.get(key), bool):
+                raise ValueError("invalid recovery manifest")
+        if not isinstance(parsed.get("attachment_count"), int) or isinstance(parsed.get("attachment_count"), bool):
+            raise ValueError("invalid recovery manifest")
+        if not isinstance(parsed.get("headers_json"), list):
+            raise ValueError("invalid recovery manifest")
+        for key in (
+            "message_id_header",
+            "subject",
+            "from_name",
+            "from_addr",
+            "reply_to",
+            "date_header",
+            "text_preview",
+            "text_body_path",
+            "html_body_path",
+            "verification_code",
+        ):
+            self._validate_optional_manifest_string(parsed, key)
+        for key in ("text_body_path", "html_body_path"):
+            value = parsed.get(key)
+            if value is not None:
+                self.storage.resolve(str(value))
+        attachments = parsed.get("attachments")
+        if not isinstance(attachments, list):
+            raise ValueError("invalid recovery manifest")
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                raise ValueError("invalid recovery manifest")
+            for key in ("id", "storage_path", "safe_filename", "content_type"):
+                if not isinstance(attachment.get(key), str):
+                    raise ValueError("invalid recovery manifest")
+            if not isinstance(attachment.get("part_index"), int) or isinstance(attachment.get("part_index"), bool):
+                raise ValueError("invalid recovery manifest")
+            if not isinstance(attachment.get("size_bytes"), int) or isinstance(attachment.get("size_bytes"), bool):
+                raise ValueError("invalid recovery manifest")
+            if not isinstance(attachment.get("is_inline"), bool):
+                raise ValueError("invalid recovery manifest")
+            for key in ("filename", "content_disposition", "content_id", "sha256"):
+                value = attachment.get(key)
+                if value is not None and not isinstance(value, str):
+                    raise ValueError("invalid recovery manifest")
+            self.storage.resolve(str(attachment["storage_path"]))
+
     def _update_smtp_session_summary(
         self,
         connection: sqlite3.Connection,
@@ -1779,6 +1844,63 @@ class RapidInboxRuntime:
         raw_size_bytes = int(manifest["raw_size_bytes"])
         envelope_from = manifest.get("envelope_from")
         recipients = self._recovery_recipients_from_manifest(connection, manifest)
+        parsed = manifest.get("parsed")
+        parsed_status = parsed.get("status") if isinstance(parsed, dict) else None
+
+        message_columns: dict[str, Any] = {
+            "parse_status": "pending",
+            "parse_error": None,
+            "message_id_header": None,
+            "subject": None,
+            "from_name": None,
+            "from_addr": envelope_from,
+            "reply_to": None,
+            "date_header": None,
+            "indexed_at": None,
+            "has_text": 0,
+            "has_html": 0,
+            "has_attachments": 0,
+            "attachment_count": 0,
+            "text_preview": None,
+            "text_body_path": None,
+            "html_body_path": None,
+            "headers_json": None,
+            "verification_code": None,
+        }
+        parsed_attachments: list[dict[str, Any]] = []
+        if parsed_status == "parsed" and isinstance(parsed, dict):
+            message_columns.update(
+                {
+                    "parse_status": "parsed",
+                    "parse_error": None,
+                    "message_id_header": parsed.get("message_id_header"),
+                    "subject": parsed.get("subject"),
+                    "from_name": parsed.get("from_name"),
+                    "from_addr": parsed.get("from_addr"),
+                    "reply_to": parsed.get("reply_to"),
+                    "date_header": parsed.get("date_header"),
+                    "indexed_at": received_at,
+                    "has_text": int(bool(parsed.get("has_text"))),
+                    "has_html": int(bool(parsed.get("has_html"))),
+                    "has_attachments": int(bool(parsed.get("has_attachments"))),
+                    "attachment_count": int(parsed.get("attachment_count") or 0),
+                    "text_preview": parsed.get("text_preview"),
+                    "text_body_path": parsed.get("text_body_path"),
+                    "html_body_path": parsed.get("html_body_path"),
+                    "headers_json": json.dumps(parsed.get("headers_json") or [], ensure_ascii=False),
+                    "verification_code": parsed.get("verification_code"),
+                }
+            )
+            parsed_attachments = list(parsed.get("attachments") or [])
+        elif parsed_status == "failed" and isinstance(parsed, dict):
+            message_columns.update(
+                {
+                    "parse_status": "failed",
+                    "parse_error": parsed.get("parse_error"),
+                    "indexed_at": received_at,
+                    "from_addr": None,
+                }
+            )
 
         connection.execute(
             """
@@ -1791,8 +1913,24 @@ class RapidInboxRuntime:
                 envelope_from,
                 from_addr,
                 received_at,
-                parse_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                indexed_at,
+                parse_status,
+                parse_error,
+                message_id_header,
+                subject,
+                from_name,
+                reply_to,
+                date_header,
+                has_text,
+                has_html,
+                has_attachments,
+                attachment_count,
+                text_preview,
+                text_body_path,
+                html_body_path,
+                headers_json,
+                verification_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id,
@@ -1801,8 +1939,25 @@ class RapidInboxRuntime:
                 raw_sha256,
                 raw_size_bytes,
                 envelope_from,
-                envelope_from,
+                message_columns["from_addr"],
                 received_at,
+                message_columns["indexed_at"],
+                message_columns["parse_status"],
+                message_columns["parse_error"],
+                message_columns["message_id_header"],
+                message_columns["subject"],
+                message_columns["from_name"],
+                message_columns["reply_to"],
+                message_columns["date_header"],
+                message_columns["has_text"],
+                message_columns["has_html"],
+                message_columns["has_attachments"],
+                message_columns["attachment_count"],
+                message_columns["text_preview"],
+                message_columns["text_body_path"],
+                message_columns["html_body_path"],
+                message_columns["headers_json"],
+                message_columns["verification_code"],
             ),
         )
 
@@ -1831,6 +1986,42 @@ class RapidInboxRuntime:
 
         for mailbox_id in mailbox_ids:
             self._refresh_mailbox_summary(connection, mailbox_id)
+
+        for attachment in parsed_attachments:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO attachments (
+                    id,
+                    message_id,
+                    part_index,
+                    filename,
+                    safe_filename,
+                    content_type,
+                    content_disposition,
+                    content_id,
+                    storage_path,
+                    sha256,
+                    size_bytes,
+                    is_inline,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment["id"],
+                    message_id,
+                    attachment["part_index"],
+                    attachment.get("filename"),
+                    attachment["safe_filename"],
+                    attachment["content_type"],
+                    attachment.get("content_disposition"),
+                    attachment.get("content_id"),
+                    attachment["storage_path"],
+                    attachment.get("sha256"),
+                    attachment["size_bytes"],
+                    int(bool(attachment["is_inline"])),
+                    received_at,
+                ),
+            )
 
     def _recovery_recipient_payload(self, rcpt_to: str, match, domain_policy: dict[str, Any]) -> dict[str, Any]:
         return {

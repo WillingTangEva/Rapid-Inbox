@@ -148,6 +148,145 @@ async def test_recovery_scanner_rebuilds_missing_message_and_delivery(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_recovery_scanner_restores_parsed_manifest_without_reparse(tmp_path) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+        response = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="noreply@openai.com",
+            content=(
+                b"From: OpenAI <noreply@openai.com>\r\n"
+                b"To: foo@adb.com\r\n"
+                b"Subject: Your OpenAI verification code\r\n"
+                b"Content-Type: text/plain; charset=utf-8\r\n"
+                b"\r\n"
+                b"Your verification code is 654321.\r\n"
+            ),
+        )
+        await runtime.drain_parser_queue()
+    finally:
+        await runtime.stop()
+
+    message_id = response.removeprefix("250 queued as ")
+    manifest_path = next(settings.manifests_dir.rglob("*.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["parsed"] = {
+        "status": "parsed",
+        "message_id_header": None,
+        "subject": "Recovered parsed subject",
+        "from_name": "OpenAI",
+        "from_addr": "noreply@openai.com",
+        "reply_to": None,
+        "date_header": None,
+        "has_text": True,
+        "has_html": False,
+        "has_attachments": False,
+        "attachment_count": 0,
+        "text_preview": "Your verification code is 654321.",
+        "text_body_path": None,
+        "html_body_path": None,
+        "headers_json": [["Subject", "Recovered parsed subject"]],
+        "verification_code": "654321",
+        "attachments": [],
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with connect_database(settings.database_path) as connection:
+        connection.execute("DELETE FROM message_deliveries")
+        connection.execute("DELETE FROM messages")
+        connection.execute("DELETE FROM mailboxes")
+        connection.commit()
+
+    recovered = RapidInboxRuntime(settings)
+    await recovered.start()
+    try:
+        await recovered.drain_parser_queue()
+    finally:
+        await recovered.stop()
+
+    with connect_database(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT parse_status, subject, verification_code FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+
+    assert row["parse_status"] == "parsed"
+    assert row["subject"] == "Recovered parsed subject"
+    assert row["verification_code"] == "654321"
+
+
+@pytest.mark.asyncio
+async def test_recovery_scanner_restores_failed_manifest_without_reparse(tmp_path) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        await runtime.create_domain("adb.com")
+        response = await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="noreply@example.com",
+            content=(
+                b"Subject: Broken\r\n"
+                b"Content-Type: text/plain; charset=utf-8\r\n"
+                b"\r\n"
+                b"Body\r\n"
+            ),
+        )
+        await runtime.drain_parser_queue()
+    finally:
+        await runtime.stop()
+
+    message_id = response.removeprefix("250 queued as ")
+    manifest_path = next(settings.manifests_dir.rglob("*.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["parsed"] = {
+        "status": "failed",
+        "parse_error": "invalid multipart boundary",
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with connect_database(settings.database_path) as connection:
+        connection.execute("DELETE FROM message_deliveries")
+        connection.execute("DELETE FROM messages")
+        connection.execute("DELETE FROM mailboxes")
+        connection.commit()
+
+    recovered = RapidInboxRuntime(settings)
+    await recovered.start()
+    try:
+        await recovered.drain_parser_queue()
+    finally:
+        await recovered.stop()
+
+    with connect_database(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT parse_status, parse_error, verification_code FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+
+    assert row["parse_status"] == "failed"
+    assert row["parse_error"] == "invalid multipart boundary"
+    assert row["verification_code"] is None
+
+
+@pytest.mark.asyncio
 async def test_startup_skips_full_manifest_scan_when_database_is_consistent(
     tmp_path,
     sample_email_bytes: bytes,
