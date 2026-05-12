@@ -6,7 +6,11 @@
 #include "storage_path.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
+#include <cstdint>
+#include <iconv.h>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,6 +34,8 @@ struct ParseContext {
     int next_part_index = 0;
 };
 
+std::string decode_charset(const std::string& bytes, const std::string& charset);
+
 bool ascii_space(unsigned char ch) {
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v';
 }
@@ -46,6 +52,14 @@ std::string trim(std::string_view value) {
     }
 
     return std::string(value.substr(first, last - first));
+}
+
+std::string trim_trailing_lwsp(std::string_view value) {
+    std::size_t last = value.size();
+    while (last > 0 && (value[last - 1] == ' ' || value[last - 1] == '\t')) {
+        --last;
+    }
+    return std::string(value.substr(0, last));
 }
 
 std::string lower_ascii(std::string_view value) {
@@ -421,14 +435,15 @@ std::vector<std::string> split_multipart_body(const std::string& body,
         const std::size_t effective_end = has_newline ? line_end : body.size();
         const std::string line = body.substr(line_start, effective_end - line_start);
 
-        if (line == marker || line == closing_marker) {
+        const std::string delimiter_line = trim_trailing_lwsp(line);
+        if (delimiter_line == marker || delimiter_line == closing_marker) {
             saw_boundary = true;
             if (in_part) {
                 parts.push_back(current);
                 current.clear();
             }
-            in_part = line != closing_marker;
-            if (line == closing_marker) {
+            in_part = delimiter_line != closing_marker;
+            if (delimiter_line == closing_marker) {
                 break;
             }
         } else if (in_part) {
@@ -447,7 +462,7 @@ std::vector<std::string> split_multipart_body(const std::string& body,
     if (!saw_boundary) {
         throw ParseFailure{"invalid multipart boundary"};
     }
-    if (in_part && !current.empty()) {
+    if (in_part) {
         parts.push_back(current);
     }
     return parts;
@@ -636,6 +651,7 @@ void parse_entity(const std::string& entity, ParseContext& context, bool root) {
 
     const int part_index = context.next_part_index++;
     const std::string decoded_body = decode_transfer_body(body, headers);
+    const std::string text_charset = parameter_value(content_type, "charset").value_or("UTF-8");
     const auto disposition = content_disposition_for(headers);
     const std::string disposition_value = disposition.has_value() ? disposition->value : "";
     const auto filename = part_filename(content_type, disposition);
@@ -644,19 +660,19 @@ void parse_entity(const std::string& entity, ParseContext& context, bool root) {
 
     if (disposition_value != "attachment" && content_type.value == "text/plain" &&
         !context.mail.has_text) {
-        context.mail.text_body = decoded_body;
+        context.mail.text_body = decode_charset(decoded_body, text_charset);
         context.mail.has_text = true;
         selected_as_body = true;
     } else if (disposition_value != "attachment" && content_type.value == "text/html" &&
                !context.mail.has_html) {
-        context.mail.html_body = decoded_body;
+        context.mail.html_body = decode_charset(decoded_body, text_charset);
         context.mail.has_html = true;
         selected_as_body = true;
     }
 
     const bool should_attach = disposition_value == "attachment" || disposition_value == "inline" ||
                                content_id.has_value() || filename.has_value();
-    if (!selected_as_body && should_attach && !decoded_body.empty()) {
+    if (!selected_as_body && should_attach) {
         add_attachment(context, part_index, headers, content_type, disposition, filename, decoded_body);
     }
 }
@@ -693,23 +709,76 @@ int hex_value(unsigned char ch) {
     return -1;
 }
 
+std::string normalized_charset_name(std::string_view charset) {
+    const std::string lowered = lower_ascii(trim(charset));
+    if (lowered.empty() || lowered == "utf8" || lowered == "utf-8" || lowered == "us-ascii" ||
+        lowered == "ascii") {
+        return "UTF-8";
+    }
+    if (lowered == "iso-8859-1" || lowered == "latin1" || lowered == "latin-1" ||
+        lowered == "iso8859-1") {
+        return "ISO-8859-1";
+    }
+    if (lowered == "windows-1252" || lowered == "cp1252") {
+        return "windows-1252";
+    }
+    if (lowered == "gbk" || lowered == "cp936") {
+        return "GBK";
+    }
+    if (lowered == "gb2312") {
+        return "GB18030";
+    }
+    return std::string(trim(charset));
+}
+
 std::string decode_charset(const std::string& bytes, const std::string& charset) {
-    const std::string lowered = lower_ascii(charset);
-    if (lowered != "iso-8859-1" && lowered != "latin1" && lowered != "latin-1") {
+    if (bytes.empty()) {
+        return bytes;
+    }
+    if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<int32_t>::max())) {
         return bytes;
     }
 
-    std::string utf8;
-    utf8.reserve(bytes.size());
-    for (unsigned char ch : bytes) {
-        if (ch < 0x80) {
-            utf8.push_back(static_cast<char>(ch));
-        } else {
-            utf8.push_back(static_cast<char>(0xc0 | (ch >> 6)));
-            utf8.push_back(static_cast<char>(0x80 | (ch & 0x3f)));
-        }
+    const std::string normalized_charset = normalized_charset_name(charset);
+    if (normalized_charset == "UTF-8") {
+        return bytes;
     }
-    return utf8;
+
+    iconv_t converter = iconv_open("UTF-8", normalized_charset.c_str());
+    if (converter == reinterpret_cast<iconv_t>(-1)) {
+        return bytes;
+    }
+
+    std::string output(bytes.size() * 4 + 16, '\0');
+    char* input = const_cast<char*>(bytes.data());
+    std::size_t input_left = bytes.size();
+    char* output_cursor = output.data();
+    std::size_t output_left = output.size();
+
+    while (input_left > 0) {
+        const std::size_t result = iconv(converter, &input, &input_left, &output_cursor, &output_left);
+        if (result != static_cast<std::size_t>(-1)) {
+            continue;
+        }
+        if (errno == E2BIG) {
+            const std::size_t used = output.size() - output_left;
+            if (output.size() > static_cast<std::size_t>(std::numeric_limits<int32_t>::max()) / 2) {
+                iconv_close(converter);
+                return bytes;
+            }
+            output.resize(output.size() * 2);
+            output_cursor = output.data() + used;
+            output_left = output.size() - used;
+            continue;
+        }
+        iconv_close(converter);
+        return bytes;
+    }
+
+    const std::size_t used = output.size() - output_left;
+    iconv_close(converter);
+    output.resize(used);
+    return output;
 }
 
 std::optional<std::string> decode_rfc2047_word_at(const std::string& value,

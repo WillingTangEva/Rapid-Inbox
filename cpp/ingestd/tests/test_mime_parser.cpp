@@ -1,5 +1,6 @@
 #include "../src/mime_parser.h"
 
+#include <exception>
 #include <string>
 
 namespace test {
@@ -174,4 +175,87 @@ void test_mime_parser_reports_malformed_multipart() {
         threw = true;
     }
     test::check(threw, "malformed multipart throws ParseFailure");
+}
+
+void test_mime_parser_allows_boundary_trailing_whitespace() {
+    const auto parsed = parse(
+        "From: QA Sender <sender@example.com>\r\n"
+        "To: foo@adb.com\r\n"
+        "Subject: Boundary Whitespace\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: multipart/alternative; boundary=\"b\"\r\n"
+        "\r\n"
+        "--b   \t\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "\r\n"
+        "Plain body with boundary whitespace.\r\n"
+        "--b--  \t\r\n");
+
+    test::check(parsed.text_body.find("Plain body with boundary whitespace.") != std::string::npos,
+                "boundary trailing whitespace accepted");
+}
+
+void test_mime_parser_decodes_latin1_text_body() {
+    const auto parsed = parse(
+        std::string(
+            "From: QA Sender <sender@example.com>\r\n"
+            "To: foo@adb.com\r\n"
+            "Subject: Latin1\r\n"
+            "Content-Type: text/plain; charset=iso-8859-1\r\n"
+            "\r\n"
+            "Caf") +
+        std::string(1, static_cast<char>(0xe9)) + "\r\n");
+
+    test::check(parsed.text_body.find("Caf\xc3\xa9") != std::string::npos,
+                "latin1 text body converted to utf-8");
+}
+
+void test_mime_parser_keeps_empty_attachment() {
+    const auto parsed = parse(
+        "From: QA Sender <sender@example.com>\r\n"
+        "To: foo@adb.com\r\n"
+        "Subject: Empty Attachment\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: multipart/mixed; boundary=\"mixed-boundary\"\r\n"
+        "\r\n"
+        "--mixed-boundary\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "\r\n"
+        "Body.\r\n"
+        "--mixed-boundary\r\n"
+        "Content-Type: application/octet-stream\r\n"
+        "Content-Disposition: attachment; filename=\"empty.bin\"\r\n"
+        "\r\n"
+        "--mixed-boundary--\r\n");
+
+    test::check(parsed.attachments.size() == 1, "empty attachment retained");
+    test::check(parsed.attachments[0].filename.value_or("") == "empty.bin",
+                "empty attachment filename");
+    test::check(parsed.attachments[0].content.empty(), "empty attachment content");
+}
+
+void test_mime_parser_decodes_gbk_encoded_subject() {
+    const auto parsed = parse(
+        "From: QA Sender <sender@example.com>\r\n"
+        "To: foo@adb.com\r\n"
+        "Subject: =?GBK?B?0enWpMLr?=\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "\r\n"
+        "Body\r\n");
+
+    test::check(parsed.subject.value_or("") == "验证码", "gbk encoded subject");
+}
+
+void test_mime_parser_failure_is_std_exception() {
+    bool caught_std = false;
+    try {
+        (void)parse(
+            "Subject: Broken\r\n"
+            "Content-Type: multipart/mixed; boundary=\"missing\"\r\n"
+            "\r\n"
+            "body without boundary\r\n");
+    } catch (const std::exception& exc) {
+        caught_std = std::string(exc.what()).find("invalid multipart boundary") != std::string::npos;
+    }
+    test::check(caught_std, "ParseFailure is catchable as std::exception");
 }

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rapid_inbox::ingestd {
@@ -41,7 +43,10 @@ struct ParsedMail {
     std::vector<ParsedAttachment> attachments;
 };
 
-struct ParseFailure {
+struct ParseFailure : public std::runtime_error {
+    explicit ParseFailure(std::string value)
+        : std::runtime_error(value), message(std::move(value)) {}
+
     std::string message;
 };
 
