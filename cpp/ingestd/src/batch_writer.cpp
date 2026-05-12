@@ -1,6 +1,9 @@
 #include "batch_writer.h"
 
 #include "json_util.h"
+#include "sqlite_db.h"
+
+#include <sqlite3.h>
 
 #include <cerrno>
 #include <cstdlib>
@@ -229,6 +232,38 @@ std::string build_domain_policy(const DomainPolicySnapshot& policy) {
     return output.str();
 }
 
+std::runtime_error sqlite_bind_error(sqlite3_stmt* statement,
+                                     int rc,
+                                     const std::string& context) {
+    sqlite3* db = sqlite3_db_handle(statement);
+    const char* message = db == nullptr ? sqlite3_errstr(rc) : sqlite3_errmsg(db);
+    return std::runtime_error(context + ": " + message);
+}
+
+void bind_text(Statement& statement,
+               int index,
+               const std::string& value,
+               const std::string& context) {
+    const int rc = sqlite3_bind_text(statement.get(), index, value.c_str(), -1, SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) {
+        throw sqlite_bind_error(statement.get(), rc, context);
+    }
+}
+
+void bind_int64(Statement& statement,
+                int index,
+                sqlite3_int64 value,
+                const std::string& context) {
+    const int rc = sqlite3_bind_int64(statement.get(), index, value);
+    if (rc != SQLITE_OK) {
+        throw sqlite_bind_error(statement.get(), rc, context);
+    }
+}
+
+std::string metric_bucket_ts(const std::string& received_at) {
+    return received_at.substr(0, 19) + "Z";
+}
+
 }
 
 BatchWriter::BatchWriter(std::filesystem::path storage_root,
@@ -331,7 +366,134 @@ void BatchWriter::write_storage_artifacts(const std::vector<MailJob>& jobs) cons
 }
 
 void BatchWriter::write_sqlite_records(const std::vector<MailJob>& jobs) const {
-    (void)jobs;
+    if (jobs.empty()) {
+        return;
+    }
+
+    SqliteDb db(database_path_, busy_timeout_ms_);
+    db.exec("BEGIN IMMEDIATE");
+
+    try {
+        auto upsert_session = db.prepare(
+            "INSERT INTO smtp_sessions (id, remote_ip, status, tls_used, connect_at, "
+            "first_command_at, last_command_at, last_mail_from, bytes_received, message_count) "
+            "VALUES (?, 'unknown', 'closed', 0, ?, ?, ?, ?, ?, 1) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "last_command_at = excluded.last_command_at, "
+            "last_mail_from = excluded.last_mail_from, "
+            "message_count = smtp_sessions.message_count + 1, "
+            "bytes_received = smtp_sessions.bytes_received + excluded.bytes_received");
+        auto insert_message = db.prepare(
+            "INSERT INTO messages (id, smtp_session_id, raw_path, raw_sha256, raw_size_bytes, "
+            "envelope_from, from_addr, received_at, parse_status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')");
+        auto upsert_mailbox = db.prepare(
+            "INSERT INTO mailboxes (domain_id, local_part_canonical, rcpt_domain_ascii, "
+            "address_canonical, address_display, first_seen_at, last_seen_at, latest_message_at, "
+            "message_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "
+            "ON CONFLICT(address_canonical) DO UPDATE SET "
+            "last_seen_at = excluded.last_seen_at, "
+            "latest_message_at = excluded.latest_message_at, "
+            "message_count = mailboxes.message_count + 1");
+        auto select_mailbox =
+            db.prepare("SELECT id FROM mailboxes WHERE address_canonical = ?");
+        auto insert_delivery = db.prepare(
+            "INSERT INTO message_deliveries (id, message_id, mailbox_id, rcpt_to, delivered_at) "
+            "VALUES (?, ?, ?, ?, ?)");
+        auto upsert_metric = db.prepare(
+            "INSERT INTO mail_metric_buckets (bucket_ts, deliveries, parse_failures) "
+            "VALUES (?, ?, 0) "
+            "ON CONFLICT(bucket_ts) DO UPDATE SET "
+            "deliveries = mail_metric_buckets.deliveries + excluded.deliveries");
+
+        for (const MailJob& job : jobs) {
+            const auto raw_size = static_cast<sqlite3_int64>(job.raw_content.size());
+
+            bind_text(upsert_session, 1, job.smtp_session_id, "bind smtp session id");
+            bind_text(upsert_session, 2, job.received_at, "bind smtp connect time");
+            bind_text(upsert_session, 3, job.received_at, "bind smtp first command time");
+            bind_text(upsert_session, 4, job.received_at, "bind smtp last command time");
+            bind_text(upsert_session, 5, job.envelope_from, "bind smtp last mail from");
+            bind_int64(upsert_session, 6, raw_size, "bind smtp bytes received");
+            upsert_session.step_done();
+            upsert_session.reset();
+
+            bind_text(insert_message, 1, job.message_id, "bind message id");
+            bind_text(insert_message, 2, job.smtp_session_id, "bind message smtp session id");
+            bind_text(insert_message, 3, job.raw_path, "bind message raw path");
+            bind_text(insert_message, 4, job.raw_sha256, "bind message raw sha256");
+            bind_int64(insert_message, 5, raw_size, "bind message raw size");
+            bind_text(insert_message, 6, job.envelope_from, "bind message envelope from");
+            bind_text(insert_message, 7, job.envelope_from, "bind message from addr");
+            bind_text(insert_message, 8, job.received_at, "bind message received at");
+            insert_message.step_done();
+            insert_message.reset();
+
+            for (const RecipientDelivery& recipient : job.recipients) {
+                const DomainMatch& match = recipient.match;
+                bind_int64(upsert_mailbox,
+                           1,
+                           static_cast<sqlite3_int64>(match.domain_id),
+                           "bind mailbox domain id");
+                bind_text(upsert_mailbox,
+                          2,
+                          match.local_part_canonical,
+                          "bind mailbox local part");
+                bind_text(upsert_mailbox, 3, match.domain_ascii, "bind mailbox domain ascii");
+                bind_text(upsert_mailbox,
+                          4,
+                          match.address_canonical,
+                          "bind mailbox address canonical");
+                bind_text(upsert_mailbox,
+                          5,
+                          match.address_canonical,
+                          "bind mailbox address display");
+                bind_text(upsert_mailbox, 6, job.received_at, "bind mailbox first seen at");
+                bind_text(upsert_mailbox, 7, job.received_at, "bind mailbox last seen at");
+                bind_text(upsert_mailbox, 8, job.received_at, "bind mailbox latest message at");
+                upsert_mailbox.step_done();
+                upsert_mailbox.reset();
+
+                bind_text(select_mailbox,
+                          1,
+                          match.address_canonical,
+                          "bind mailbox id lookup address");
+                if (!select_mailbox.step_row()) {
+                    throw std::runtime_error("mailbox upsert did not produce a row: " +
+                                             match.address_canonical);
+                }
+                const sqlite3_int64 mailbox_id = sqlite3_column_int64(select_mailbox.get(), 0);
+                select_mailbox.reset();
+
+                bind_text(insert_delivery, 1, recipient.delivery_id, "bind delivery id");
+                bind_text(insert_delivery, 2, job.message_id, "bind delivery message id");
+                bind_int64(insert_delivery, 3, mailbox_id, "bind delivery mailbox id");
+                bind_text(insert_delivery, 4, recipient.rcpt_to, "bind delivery rcpt to");
+                bind_text(insert_delivery, 5, job.received_at, "bind delivery delivered at");
+                insert_delivery.step_done();
+                insert_delivery.reset();
+            }
+
+            if (!job.recipients.empty()) {
+                bind_text(upsert_metric, 1, metric_bucket_ts(job.received_at), "bind metric bucket");
+                bind_int64(upsert_metric,
+                           2,
+                           static_cast<sqlite3_int64>(job.recipients.size()),
+                           "bind metric deliveries");
+                upsert_metric.step_done();
+                upsert_metric.reset();
+            }
+        }
+
+        db.exec("COMMIT");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK");
+        } catch (...) {
+        }
+        throw;
+    }
 }
 
 void BatchWriter::write_batch(const std::vector<MailJob>& jobs) const {

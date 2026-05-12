@@ -41,6 +41,7 @@ void test_batch_writer_manifest_includes_domain_policy_snapshot();
 void test_batch_writer_missing_domain_policy_rejects_without_creating_database();
 void test_batch_writer_uses_job_policy_without_touching_database();
 void test_batch_writer_ignores_preexisting_part_symlinks();
+void test_batch_writer_writes_sqlite_pending_records();
 
 int main() {
     try {
@@ -73,6 +74,7 @@ int main() {
         test_batch_writer_missing_domain_policy_rejects_without_creating_database();
         test_batch_writer_uses_job_policy_without_touching_database();
         test_batch_writer_ignores_preexisting_part_symlinks();
+        test_batch_writer_writes_sqlite_pending_records();
         std::cout << "ingestd_tests ok\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& exc) {

@@ -1,6 +1,9 @@
 #include "../src/batch_writer.h"
 #include "../src/mail_job.h"
+#include "../src/sqlite_db.h"
 #include "../src/storage_path.h"
+
+#include <sqlite3.h>
 
 #include <filesystem>
 #include <fstream>
@@ -230,4 +233,78 @@ void test_batch_writer_ignores_preexisting_part_symlinks() {
     const std::string manifest_content = read_text_file(manifest_final);
     test::check(manifest_content.find("\"message_id\":\"msg_1\"") != std::string::npos,
                 "manifest written correctly");
+}
+
+void test_batch_writer_writes_sqlite_pending_records() {
+    const fs::path root = fs::temp_directory_path() / "rapid-inbox-writer-sqlite";
+    fs::remove_all(root);
+    fs::create_directories(root);
+    const fs::path db_path = root / "app.db";
+    {
+        rapid_inbox::ingestd::SqliteDb db(db_path, 5000);
+        const fs::path schema_path = fs::path(RAPID_INBOX_REPO_ROOT) / "sqlite_schema.sql";
+        std::ifstream schema(schema_path);
+        std::string sql((std::istreambuf_iterator<char>(schema)),
+                        std::istreambuf_iterator<char>());
+        db.exec(sql);
+        db.exec("INSERT INTO domains (id, root_domain_ascii, root_domain_unicode, created_at, "
+                "updated_at) VALUES (1, 'adb.com', 'adb.com', '2026-05-12T03:04:05Z', "
+                "'2026-05-12T03:04:05Z')");
+    }
+
+    rapid_inbox::ingestd::BatchWriter writer(root, db_path, 5000, false);
+    const rapid_inbox::ingestd::MailJob job = sample_job();
+    writer.write_batch({job});
+
+    rapid_inbox::ingestd::SqliteDb db(db_path, 5000);
+    auto message =
+        db.prepare("SELECT parse_status, raw_path, envelope_from FROM messages WHERE id = 'msg_1'");
+    test::check(message.step_row(), "message row exists");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(message.get(), 0))) ==
+                    "pending",
+                "message pending");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(message.get(), 1))) ==
+                    job.raw_path,
+                "message raw path");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(message.get(), 2))) ==
+                    "sender@example.com",
+                "message envelope from");
+
+    auto mailbox =
+        db.prepare("SELECT message_count, address_canonical FROM mailboxes WHERE "
+                   "address_canonical = 'code@adb.com'");
+    test::check(mailbox.step_row(), "mailbox row exists");
+    test::check(sqlite3_column_int(mailbox.get(), 0) == 1, "mailbox count");
+
+    auto delivery =
+        db.prepare("SELECT id, rcpt_to FROM message_deliveries WHERE message_id = 'msg_1'");
+    test::check(delivery.step_row(), "delivery exists");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(delivery.get(), 0))) ==
+                    "dlv_1",
+                "delivery id");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(delivery.get(), 1))) ==
+                    "code@adb.com",
+                "delivery rcpt");
+
+    auto session = db.prepare("SELECT remote_ip, status, message_count, bytes_received, "
+                              "last_command_at FROM smtp_sessions WHERE id = 'smtp_1'");
+    test::check(session.step_row(), "smtp session row exists");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(session.get(), 0))) ==
+                    "unknown",
+                "smtp remote ip");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(session.get(), 1))) ==
+                    "closed",
+                "smtp status");
+    test::check(sqlite3_column_int(session.get(), 2) == 1, "smtp message count");
+    test::check(sqlite3_column_int64(session.get(), 3) ==
+                    static_cast<sqlite3_int64>(job.raw_content.size()),
+                "smtp bytes received");
+    test::check(std::string(reinterpret_cast<const char*>(sqlite3_column_text(session.get(), 4))) ==
+                    job.received_at,
+                "smtp last command at");
+
+    auto metric = db.prepare("SELECT deliveries FROM mail_metric_buckets WHERE bucket_ts = "
+                             "'2026-05-12T03:04:05Z'");
+    test::check(metric.step_row(), "metric bucket exists");
+    test::check(sqlite3_column_int(metric.get(), 0) == 1, "metric deliveries");
 }
