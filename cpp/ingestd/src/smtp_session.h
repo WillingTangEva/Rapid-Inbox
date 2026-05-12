@@ -1,0 +1,38 @@
+#pragma once
+
+#include "domain_matcher.h"
+#include "mail_queue.h"
+
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace rapid_inbox::ingestd {
+
+class SmtpSession {
+public:
+    SmtpSession(const DomainMatcher& matcher,
+                MailQueue& queue,
+                int max_recipients,
+                int max_message_size_bytes);
+
+    std::string greeting() const;
+    std::string handle_line(const std::string& line);
+
+private:
+    std::string handle_command(const std::string& line);
+    std::string finish_data();
+    std::optional<std::string> extract_path_argument(const std::string& line) const;
+
+    const DomainMatcher& matcher_;
+    MailQueue& queue_;
+    int max_recipients_;
+    int max_message_size_bytes_;
+    std::string session_id_;
+    std::string mail_from_;
+    std::vector<RecipientDelivery> recipients_;
+    bool in_data_ = false;
+    std::string data_;
+};
+
+}

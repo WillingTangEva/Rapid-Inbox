@@ -35,6 +35,8 @@ void test_sqlite_statement_outliving_db_closes_connection();
 void test_mail_queue_capacity_and_close();
 void test_mail_queue_try_push_accepts_lvalues_and_rvalues();
 void test_mail_queue_close_wakes_waiting_pop_batch();
+void test_smtp_session_accepts_valid_message();
+void test_smtp_session_rejects_unknown_domain();
 void test_batch_writer_writes_raw_and_manifest();
 void test_batch_writer_writes_private_storage_permissions();
 void test_batch_writer_manifest_includes_domain_policy_snapshot();
@@ -68,6 +70,8 @@ int main() {
         test_mail_queue_capacity_and_close();
         test_mail_queue_try_push_accepts_lvalues_and_rvalues();
         test_mail_queue_close_wakes_waiting_pop_batch();
+        test_smtp_session_accepts_valid_message();
+        test_smtp_session_rejects_unknown_domain();
         test_batch_writer_writes_raw_and_manifest();
         test_batch_writer_writes_private_storage_permissions();
         test_batch_writer_manifest_includes_domain_policy_snapshot();
