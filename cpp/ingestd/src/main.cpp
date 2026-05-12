@@ -2,12 +2,24 @@
 #include "ingest_app.h"
 #include "smtp_server.h"
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <exception>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
+
+namespace {
+
+std::atomic<bool> stop_requested{false};
+
+void request_stop(int) {
+    stop_requested.store(true);
+}
+
+}
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--help") {
@@ -27,6 +39,10 @@ int main(int argc, char** argv) {
     }
 
     try {
+        stop_requested.store(false);
+        std::signal(SIGTERM, request_stop);
+        std::signal(SIGINT, request_stop);
+
         auto config = rapid_inbox::ingestd::Config::load(base_dir);
         rapid_inbox::ingestd::IngestApp app(config);
         app.start_writer();
@@ -44,9 +60,12 @@ int main(int argc, char** argv) {
         server.start();
         std::cout << "rapid-inbox-ingestd listening on " << config.smtp_host << ":"
                   << config.smtp_port << "\n";
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::hours(24));
+        while (!stop_requested.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
+        server.stop();
+        app.stop_and_drain();
+        std::cout << "rapid-inbox-ingestd stopped after drain\n";
     } catch (const std::exception& exc) {
         std::cerr << "rapid-inbox-ingestd failed: " << exc.what() << "\n";
         return 1;
