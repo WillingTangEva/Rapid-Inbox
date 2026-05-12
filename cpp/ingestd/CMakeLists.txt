@@ -16,6 +16,7 @@ set(INGESTD_LIB_SOURCES
     src/domain_cache.cpp
     src/domain_matcher.cpp
     src/id.cpp
+    src/ingest_app.cpp
     src/json_util.cpp
     src/mail_queue.cpp
     src/sha256.cpp
