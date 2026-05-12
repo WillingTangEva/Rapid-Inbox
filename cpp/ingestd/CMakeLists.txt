@@ -26,6 +26,7 @@ set(INGESTD_LIB_SOURCES
     src/sqlite_db.cpp
     src/storage_path.cpp
     src/time_utils.cpp
+    src/verification_code.cpp
 )
 
 set(INGESTD_SOURCES
@@ -53,6 +54,7 @@ add_executable(ingestd_tests
     tests/test_batch_writer.cpp
     tests/test_sqlite_db.cpp
     tests/test_storage_utils.cpp
+    tests/test_verification_code.cpp
 )
 target_compile_options(ingestd_tests PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(ingestd_tests PRIVATE ingestd_core)
