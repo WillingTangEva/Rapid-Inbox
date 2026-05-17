@@ -37,6 +37,7 @@ void test_verification_code_extracts_chinese_code();
 void test_verification_code_extracts_grouped_digit_code();
 void test_verification_code_extracts_alphanumeric_code();
 void test_verification_code_extracts_html_openai_code();
+void test_verification_code_extracts_openai_localized_codes();
 void test_verification_code_ignores_order_number();
 void test_verification_code_ignores_ambiguous_two_codes();
 void test_verification_code_extracts_numeric_html_entities();
