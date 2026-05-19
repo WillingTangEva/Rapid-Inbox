@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from app.config import default_settings
+from app.db.connection import connect_database
 import app.runtime as runtime_module
 from app.main import create_app
 from app.services.messages import MessageService
@@ -494,6 +495,37 @@ async def test_public_api_lists_mailbox_verification_codes(app_client, runtime) 
     assert payload["mailbox"] == "foo@adb.com"
     assert payload["items"][0]["verification_code"] == "654321"
     assert payload["items"][0]["received_at"]
+
+
+@pytest.mark.asyncio
+async def test_public_api_missing_mailbox_verification_codes_is_read_only(app_client, runtime) -> None:
+    await runtime.create_domain("adb.com")
+    public_key = await runtime.api_keys.create_key(
+        name="public-code-empty",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+    )
+
+    response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/verification-codes",
+        headers={"X-API-Key": public_key["plain_text"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mailbox"] == "foo@adb.com"
+    assert payload["message_count"] == 0
+    assert payload["items"] == []
+
+    with connect_database(runtime.settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS count FROM mailboxes WHERE address_canonical = ?",
+            ("foo@adb.com",),
+        ).fetchone()
+
+    assert row["count"] == 0
 
 
 @pytest.mark.asyncio

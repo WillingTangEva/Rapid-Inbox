@@ -32,9 +32,9 @@ from app.smtp.matcher import DomainMatcher, DomainRule
 
 
 MESSAGE_RETENTION_SECONDS = 10 * 60
-MESSAGE_RETENTION_CLEANUP_INTERVAL_SECONDS = 30
+MESSAGE_RETENTION_CLEANUP_INTERVAL_SECONDS = 5
 METRIC_RETENTION_SECONDS = 48 * 60 * 60
-RETENTION_DELETE_BATCH_SIZE = 250
+RETENTION_DELETE_BATCH_SIZE = 50
 PENDING_PARSE_SCAN_INTERVAL_SECONDS = 0.5
 PENDING_PARSE_SCAN_BATCH_SIZE = 5000
 
@@ -251,8 +251,9 @@ class RapidInboxRuntime:
                 FROM messages
                 WHERE received_at <= ?
                 ORDER BY received_at ASC, id ASC
+                LIMIT ?
                 """,
-                (cutoff,),
+                (cutoff, RETENTION_DELETE_BATCH_SIZE),
             ).fetchall()
         return [str(row["id"]) for row in rows]
 
@@ -265,8 +266,9 @@ class RapidInboxRuntime:
                 FROM smtp_sessions
                 WHERE {where_clause}
                 ORDER BY connect_at ASC, id ASC
+                LIMIT ?
                 """,
-                tuple(params),
+                tuple(params) + (RETENTION_DELETE_BATCH_SIZE,),
             ).fetchall()
         return [str(row["id"]) for row in rows]
 
@@ -520,7 +522,7 @@ class RapidInboxRuntime:
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
                 """
-                SELECT COUNT(*) AS count
+                SELECT 1
                 FROM mailboxes AS mb
                 WHERE mb.message_count = 0
                   AND mb.latest_message_at IS NULL
@@ -530,10 +532,11 @@ class RapidInboxRuntime:
                       FROM message_deliveries AS d
                       WHERE d.mailbox_id = mb.id
                   )
+                LIMIT 1
                 """,
                 (cutoff,),
             ).fetchone()
-        return 0 if row is None else int(row["count"])
+        return 0 if row is None else 1
 
     def _metric_retention_cutoff(self) -> str:
         now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
@@ -566,10 +569,15 @@ class RapidInboxRuntime:
     def _expired_metric_bucket_count(self, cutoff: str) -> int:
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
-                "SELECT COUNT(*) AS count FROM mail_metric_buckets WHERE bucket_ts < ?",
+                """
+                SELECT 1
+                FROM mail_metric_buckets
+                WHERE bucket_ts < ?
+                LIMIT 1
+                """,
                 (cutoff,),
             ).fetchone()
-        return 0 if row is None else int(row["count"])
+        return 0 if row is None else 1
 
     def _delete_storage_files(self, storage_paths: list[str]) -> int:
         deleted = 0
@@ -1397,6 +1405,21 @@ class RapidInboxRuntime:
             raise LookupError("mailbox domain not managed")
 
         mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
+        if mailbox["id"] is None:
+            return {
+                "mailbox": match.address_canonical,
+                "items": [],
+                "message_count": 0,
+                "limit": limit,
+                "offset": offset,
+                "pagination_mode": "cursor" if cursor is not None else "offset",
+                "next_cursor": None,
+                "has_previous": False,
+                "has_next": False,
+                "previous_offset": None,
+                "next_offset": None,
+            }
+
         cursor_filter = ""
         params: list[Any] = [mailbox["id"]]
         if cursor is not None:
@@ -1468,6 +1491,8 @@ class RapidInboxRuntime:
             raise LookupError("mailbox domain not managed")
 
         mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
+        if mailbox["id"] is None:
+            raise LookupError("delivery not found")
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
                 """
@@ -1499,6 +1524,8 @@ class RapidInboxRuntime:
             raise LookupError("mailbox domain not managed")
 
         mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
+        if mailbox["id"] is None:
+            raise LookupError("delivery not found")
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
                 """
@@ -1638,25 +1665,13 @@ class RapidInboxRuntime:
         await self._authorize_public_mailbox_access(match.address_canonical, match.domain_id, request_ip=request_ip)
 
         if mailbox is None:
-            await self._ensure_mailbox_exists(match)
-            with connect_database(self.settings.database_path) as connection:
-                mailbox = connection.execute(
-                    """
-                    SELECT
-                        id,
-                        address_canonical,
-                        message_count,
-                        public_enabled,
-                        is_hidden
-                    FROM mailboxes
-                    WHERE address_canonical = ?
-                    """,
-                    (match.address_canonical,),
-                ).fetchone()
-            if mailbox is None:
-                raise LookupError("mailbox not found")
-            if not bool(mailbox["public_enabled"]) or bool(mailbox["is_hidden"]):
-                raise LookupError("mailbox not public")
+            return {
+                "id": None,
+                "address_canonical": match.address_canonical,
+                "message_count": 0,
+                "public_enabled": 1,
+                "is_hidden": 0,
+            }
 
         return dict(mailbox)
 
@@ -2233,26 +2248,6 @@ class RapidInboxRuntime:
         except LookupError as exc:
             raise ValueError(f"unable to recover recipient: {rcpt_to}") from exc
         return self._recovery_recipient_payload(rcpt_to, match, domain_policy)
-
-    async def _ensure_mailbox_exists(self, match) -> None:
-        def operation(connection: sqlite3.Connection) -> None:
-            existing = connection.execute(
-                "SELECT id FROM mailboxes WHERE address_canonical = ?",
-                (match.address_canonical,),
-            ).fetchone()
-            if existing is not None:
-                return
-            try:
-                self._insert_mailbox(connection, match, utc_now(), message_count=0, latest_message_at=None)
-            except sqlite3.IntegrityError:
-                existing = connection.execute(
-                    "SELECT id FROM mailboxes WHERE address_canonical = ?",
-                    (match.address_canonical,),
-                ).fetchone()
-                if existing is None:
-                    raise
-
-        await self.writer.execute(operation)
 
     def _upsert_mailbox(self, connection: sqlite3.Connection, match, received_at: str) -> int:
         existing = connection.execute(
