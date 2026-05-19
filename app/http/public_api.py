@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 
@@ -14,7 +15,7 @@ from app.services.messages import MessageService
 router = APIRouter()
 
 
-def require_public_api_key(request: Request, api_key: str | None, query_api_key: str | None = None) -> None:
+async def require_public_api_key(request: Request, api_key: str | None, query_api_key: str | None = None) -> None:
     set_active_permission_context(None)
     credential = api_key or query_api_key
     if not credential:
@@ -22,7 +23,8 @@ def require_public_api_key(request: Request, api_key: str | None, query_api_key:
 
     transport = "header" if api_key else "query"
     try:
-        context = request.app.state.runtime.api_keys.authenticate_public_credential(
+        context = await asyncio.to_thread(
+            request.app.state.runtime.api_keys.authenticate_public_credential,
             credential,
             transport=transport,
         )
@@ -72,7 +74,7 @@ async def list_mailbox_messages(
     offset: int = Query(default=0, ge=0, le=1_000_000),
     cursor: str | None = Query(default=None),
 ) -> dict:
-    require_public_api_key(request, x_api_key, api_key)
+    await require_public_api_key(request, x_api_key, api_key)
     request_ip = request.client.host if request.client is not None else None
     try:
         result = await _message_service(request).get_public_mailbox_view(
@@ -106,7 +108,7 @@ async def list_mailbox_verification_codes(
     limit: int = Query(default=50, ge=1, le=1000),
     offset: int = Query(default=0, ge=0, le=1_000_000),
 ) -> dict:
-    require_public_api_key(request, x_api_key, api_key)
+    await require_public_api_key(request, x_api_key, api_key)
     request_ip = request.client.host if request.client is not None else None
     try:
         return await _message_service(request).get_public_mailbox_verification_codes(
@@ -129,7 +131,7 @@ async def get_mailbox_message(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     api_key: str | None = Query(default=None),
 ) -> dict:
-    require_public_api_key(request, x_api_key, api_key)
+    await require_public_api_key(request, x_api_key, api_key)
     request_ip = request.client.host if request.client is not None else None
     try:
         return await _message_service(request).get_public_delivery_detail(
@@ -152,7 +154,7 @@ async def get_mailbox_message_verification_code(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     api_key: str | None = Query(default=None),
 ) -> dict:
-    require_public_api_key(request, x_api_key, api_key)
+    await require_public_api_key(request, x_api_key, api_key)
     request_ip = request.client.host if request.client is not None else None
     try:
         return await _message_service(request).get_public_delivery_verification_code(
@@ -174,7 +176,7 @@ async def get_mailbox_message_raw(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     api_key: str | None = Query(default=None),
 ) -> Response:
-    require_public_api_key(request, x_api_key, api_key)
+    await require_public_api_key(request, x_api_key, api_key)
     request_ip = request.client.host if request.client is not None else None
     try:
         raw_bytes = await _message_service(request).get_public_raw_message(
@@ -199,7 +201,7 @@ async def get_mailbox_message_attachment(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     api_key: str | None = Query(default=None),
 ) -> Response:
-    require_public_api_key(request, x_api_key, api_key)
+    await require_public_api_key(request, x_api_key, api_key)
     request_ip = request.client.host if request.client is not None else None
     service = _attachment_service(request)
     try:

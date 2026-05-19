@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -392,13 +393,13 @@ class MessageService:
         surface: str,
         request_ip: str | None = None,
     ) -> bytes:
-        await self.get_public_delivery_detail(
+        detail = await self.get_public_delivery_detail(
             mailbox_address,
             delivery_id,
             surface=surface,
             request_ip=request_ip,
         )
-        return await self._runtime.get_raw_message(delivery_id)
+        return await asyncio.to_thread(self._runtime.storage.read_bytes, detail["raw_path"])
 
     async def get_public_html_preview_srcdoc(
         self,
@@ -465,15 +466,7 @@ class MessageService:
         if surface not in {"web", "api"}:
             raise ValueError("invalid public surface")
 
-        with connect_database(self._runtime.settings.database_path) as connection:
-            row = connection.execute(
-                """
-                SELECT public_web_enabled, public_api_enabled
-                FROM domains
-                WHERE id = ?
-                """,
-                (match.domain_id,),
-            ).fetchone()
+        row = await asyncio.to_thread(self._load_public_surface_flags, match.domain_id)
         if row is None:
             raise LookupError("mailbox domain not managed")
         if surface == "web" and not bool(row["public_web_enabled"]):
@@ -481,6 +474,18 @@ class MessageService:
         if surface == "api" and not bool(row["public_api_enabled"]):
             raise LookupError("public api disabled")
         return match.address_canonical
+
+    def _load_public_surface_flags(self, domain_id: int) -> dict[str, Any] | None:
+        with connect_database(self._runtime.settings.database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT public_web_enabled, public_api_enabled
+                FROM domains
+                WHERE id = ?
+                """,
+                (domain_id,),
+            ).fetchone()
+        return None if row is None else dict(row)
 
     def _normalize_cid_reference(self, value: Any) -> str:
         if value is None:

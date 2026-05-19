@@ -1420,38 +1420,13 @@ class RapidInboxRuntime:
                 "next_offset": None,
             }
 
-        cursor_filter = ""
-        params: list[Any] = [mailbox["id"]]
-        if cursor is not None:
-            delivered_at, delivery_id = cursor
-            cursor_filter = "AND (d.delivered_at < ? OR (d.delivered_at = ? AND d.id < ?))"
-            params.extend([delivered_at, delivered_at, delivery_id])
-        page_limit = limit + 1
-        params.extend([page_limit, 0 if cursor is not None else offset])
-        with connect_database(self.settings.database_path) as connection:
-            rows = connection.execute(
-                f"""
-                SELECT
-                    d.id AS delivery_id,
-                    d.delivered_at,
-                    m.id AS message_id,
-                    m.subject,
-                    m.from_addr,
-                    m.verification_code,
-                    m.text_preview,
-                    m.text_body_path,
-                    m.html_body_path,
-                    m.has_attachments,
-                    m.parse_status
-                FROM message_deliveries AS d
-                JOIN messages AS m ON m.id = d.message_id
-                WHERE d.mailbox_id = ? AND d.status = 'active'
-                    {cursor_filter}
-                ORDER BY d.delivered_at DESC, d.id DESC
-                LIMIT ? OFFSET ?
-                """,
-                tuple(params),
-            ).fetchall()
+        rows = await asyncio.to_thread(
+            self._load_mailbox_view_rows,
+            int(mailbox["id"]),
+            limit=limit,
+            offset=offset,
+            cursor=cursor,
+        )
 
         items = [dict(row) for row in rows[:limit]]
         message_count = int(mailbox["message_count"])
@@ -1493,27 +1468,11 @@ class RapidInboxRuntime:
         mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
         if mailbox["id"] is None:
             raise LookupError("delivery not found")
-        with connect_database(self.settings.database_path) as connection:
-            row = connection.execute(
-                """
-                SELECT
-                    d.id AS delivery_id,
-                    d.delivered_at,
-                    m.id AS message_id,
-                    m.subject,
-                    m.from_addr,
-                    m.verification_code,
-                    m.text_preview,
-                    m.text_body_path,
-                    m.html_body_path,
-                    m.has_attachments,
-                    m.parse_status
-                FROM message_deliveries AS d
-                JOIN messages AS m ON m.id = d.message_id
-                WHERE d.id = ? AND d.mailbox_id = ? AND d.status = 'active'
-                """,
-                (delivery_id, mailbox["id"]),
-            ).fetchone()
+        row = await asyncio.to_thread(
+            self._load_mailbox_delivery_item,
+            delivery_id,
+            int(mailbox["id"]),
+        )
         if row is None:
             raise LookupError("delivery not found")
         return dict(row)
@@ -1526,45 +1485,13 @@ class RapidInboxRuntime:
         mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
         if mailbox["id"] is None:
             raise LookupError("delivery not found")
-        with connect_database(self.settings.database_path) as connection:
-            row = connection.execute(
-                """
-                SELECT
-                    d.id AS delivery_id,
-                    d.delivered_at,
-                    m.id AS message_id,
-                    m.subject,
-                    m.from_addr,
-                    m.verification_code,
-                    m.text_body_path,
-                    m.html_body_path,
-                    m.parse_status,
-                    m.raw_path,
-                    m.headers_json
-                FROM message_deliveries AS d
-                JOIN messages AS m ON m.id = d.message_id
-                WHERE d.id = ? AND d.mailbox_id = ? AND d.status = 'active'
-                """,
-                (delivery_id, mailbox["id"]),
-            ).fetchone()
-            if row is None:
-                raise LookupError("delivery not found")
-            attachments = connection.execute(
-                """
-                SELECT
-                    id,
-                    filename,
-                    safe_filename,
-                    content_type,
-                    storage_path,
-                    size_bytes,
-                    is_inline
-                FROM attachments
-                WHERE message_id = ?
-                ORDER BY part_index ASC
-                """,
-                (row["message_id"],),
-            ).fetchall()
+        row, attachments = await asyncio.to_thread(
+            self._load_delivery_detail,
+            delivery_id,
+            int(mailbox["id"]),
+        )
+        if row is None:
+            raise LookupError("delivery not found")
 
         return {
             "delivery_id": row["delivery_id"],
@@ -1590,25 +1517,50 @@ class RapidInboxRuntime:
         offset: int = 0,
         request_ip: str | None = None,
     ) -> dict[str, Any]:
-        mailbox = await self.get_mailbox_view(
-            mailbox_address,
+        match = self.domains.match_address(mailbox_address)
+        if match is None:
+            raise LookupError("mailbox domain not managed")
+
+        mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
+        if mailbox["id"] is None:
+            return {
+                "mailbox": match.address_canonical,
+                "items": [],
+                "message_count": 0,
+                "limit": limit,
+                "offset": offset,
+                "pagination_mode": "offset",
+                "next_cursor": None,
+                "has_previous": False,
+                "has_next": False,
+                "previous_offset": None,
+                "next_offset": None,
+            }
+
+        rows = await asyncio.to_thread(
+            self._load_mailbox_verification_code_rows,
+            int(mailbox["id"]),
             limit=limit,
             offset=offset,
-            request_ip=request_ip,
         )
-        items = [
-            {
-                "delivery_id": item["delivery_id"],
-                "message_id": item["message_id"],
-                "received_at": item["delivered_at"],
-                "subject": item.get("subject"),
-                "from_addr": item.get("from_addr"),
-                "parse_status": item.get("parse_status"),
-                "verification_code": item.get("verification_code"),
-            }
-            for item in mailbox["items"]
-        ]
-        return {**mailbox, "items": items}
+        items = [dict(row) for row in rows]
+        message_count = int(mailbox["message_count"])
+        has_previous = offset > 0
+        has_next = offset + len(items) < message_count
+
+        return {
+            "mailbox": match.address_canonical,
+            "items": items,
+            "message_count": message_count,
+            "limit": limit,
+            "offset": offset,
+            "pagination_mode": "offset",
+            "next_cursor": None,
+            "has_previous": has_previous,
+            "has_next": has_next,
+            "previous_offset": max(offset - limit, 0) if has_previous else None,
+            "next_offset": offset + limit if has_next else None,
+        }
 
     async def get_delivery_verification_code(
         self,
@@ -1644,20 +1596,7 @@ class RapidInboxRuntime:
         await self.api_keys.record_usage(context, ip=request_ip)
 
     async def _load_public_mailbox(self, match, *, request_ip: str | None = None) -> dict[str, Any]:
-        with connect_database(self.settings.database_path) as connection:
-            mailbox = connection.execute(
-                """
-                SELECT
-                    id,
-                    address_canonical,
-                    message_count,
-                    public_enabled,
-                    is_hidden
-                FROM mailboxes
-                WHERE address_canonical = ?
-                """,
-                (match.address_canonical,),
-            ).fetchone()
+        mailbox = await asyncio.to_thread(self._load_public_mailbox_row, match.address_canonical)
 
         if mailbox is not None and (not bool(mailbox["public_enabled"]) or bool(mailbox["is_hidden"])):
             raise LookupError("mailbox not public")
@@ -1675,9 +1614,162 @@ class RapidInboxRuntime:
 
         return dict(mailbox)
 
-    async def get_raw_message(self, delivery_id: str) -> bytes:
+    def _load_public_mailbox_row(self, mailbox_address: str) -> sqlite3.Row | None:
+        with connect_database(self.settings.database_path) as connection:
+            return connection.execute(
+                """
+                SELECT
+                    id,
+                    address_canonical,
+                    message_count,
+                    public_enabled,
+                    is_hidden
+                FROM mailboxes
+                WHERE address_canonical = ?
+                """,
+                (mailbox_address,),
+            ).fetchone()
+
+    def _load_mailbox_view_rows(
+        self,
+        mailbox_id: int,
+        *,
+        limit: int,
+        offset: int,
+        cursor: tuple[str, str] | None,
+    ) -> list[sqlite3.Row]:
+        cursor_filter = ""
+        params: list[Any] = [mailbox_id]
+        if cursor is not None:
+            delivered_at, delivery_id = cursor
+            cursor_filter = "AND (d.delivered_at < ? OR (d.delivered_at = ? AND d.id < ?))"
+            params.extend([delivered_at, delivered_at, delivery_id])
+        page_limit = limit + 1
+        params.extend([page_limit, 0 if cursor is not None else offset])
+        with connect_database(self.settings.database_path) as connection:
+            return connection.execute(
+                f"""
+                SELECT
+                    d.id AS delivery_id,
+                    d.delivered_at,
+                    m.id AS message_id,
+                    m.subject,
+                    m.from_addr,
+                    m.verification_code,
+                    m.text_preview,
+                    m.text_body_path,
+                    m.html_body_path,
+                    m.has_attachments,
+                    m.parse_status
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                WHERE d.mailbox_id = ? AND d.status = 'active'
+                    {cursor_filter}
+                ORDER BY d.delivered_at DESC, d.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params),
+            ).fetchall()
+
+    def _load_mailbox_verification_code_rows(
+        self,
+        mailbox_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[sqlite3.Row]:
+        with connect_database(self.settings.database_path) as connection:
+            return connection.execute(
+                """
+                SELECT
+                    d.id AS delivery_id,
+                    m.id AS message_id,
+                    d.delivered_at AS received_at,
+                    m.subject,
+                    m.from_addr,
+                    m.parse_status,
+                    m.verification_code
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                WHERE d.mailbox_id = ? AND d.status = 'active'
+                ORDER BY d.delivered_at DESC, d.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (mailbox_id, limit, offset),
+            ).fetchall()
+
+    def _load_mailbox_delivery_item(self, delivery_id: str, mailbox_id: int) -> sqlite3.Row | None:
+        with connect_database(self.settings.database_path) as connection:
+            return connection.execute(
+                """
+                SELECT
+                    d.id AS delivery_id,
+                    d.delivered_at,
+                    m.id AS message_id,
+                    m.subject,
+                    m.from_addr,
+                    m.verification_code,
+                    m.text_preview,
+                    m.text_body_path,
+                    m.html_body_path,
+                    m.has_attachments,
+                    m.parse_status
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                WHERE d.id = ? AND d.mailbox_id = ? AND d.status = 'active'
+                """,
+                (delivery_id, mailbox_id),
+            ).fetchone()
+
+    def _load_delivery_detail(
+        self,
+        delivery_id: str,
+        mailbox_id: int,
+    ) -> tuple[sqlite3.Row | None, list[sqlite3.Row]]:
         with connect_database(self.settings.database_path) as connection:
             row = connection.execute(
+                """
+                SELECT
+                    d.id AS delivery_id,
+                    d.delivered_at,
+                    m.id AS message_id,
+                    m.subject,
+                    m.from_addr,
+                    m.verification_code,
+                    m.text_body_path,
+                    m.html_body_path,
+                    m.parse_status,
+                    m.raw_path,
+                    m.headers_json
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                WHERE d.id = ? AND d.mailbox_id = ? AND d.status = 'active'
+                """,
+                (delivery_id, mailbox_id),
+            ).fetchone()
+            if row is None:
+                return None, []
+            attachments = connection.execute(
+                """
+                SELECT
+                    id,
+                    filename,
+                    safe_filename,
+                    content_type,
+                    storage_path,
+                    size_bytes,
+                    is_inline
+                FROM attachments
+                WHERE message_id = ?
+                ORDER BY part_index ASC
+                """,
+                (row["message_id"],),
+            ).fetchall()
+        return row, attachments
+
+    def _load_raw_message_path(self, delivery_id: str) -> sqlite3.Row | None:
+        with connect_database(self.settings.database_path) as connection:
+            return connection.execute(
                 """
                 SELECT m.raw_path
                 FROM message_deliveries AS d
@@ -1686,9 +1778,12 @@ class RapidInboxRuntime:
                 """,
                 (delivery_id,),
             ).fetchone()
+
+    async def get_raw_message(self, delivery_id: str) -> bytes:
+        row = await asyncio.to_thread(self._load_raw_message_path, delivery_id)
         if row is None:
             raise LookupError("delivery not found")
-        return self.storage.read_bytes(row["raw_path"])
+        return await asyncio.to_thread(self.storage.read_bytes, row["raw_path"])
 
     async def _parse_message(self, task: ParseTask) -> None:
         try:
