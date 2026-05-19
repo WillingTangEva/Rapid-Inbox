@@ -15,6 +15,8 @@ class PermissionContext:
     name: str = ""
     kind: str = "public"
     legacy_credential: bool = False
+    rate_limit_per_min: int = 0
+    allowed_ip_cidrs: tuple[str, ...] = ()
 
 
 class PermissionDenied(HTTPException):

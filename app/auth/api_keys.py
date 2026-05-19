@@ -473,24 +473,11 @@ class ApiKeyService:
         if context.api_key_id is None:
             return
 
-        with connect_database(self.database_path) as connection:
-            row = connection.execute(
-                """
-                SELECT rate_limit_per_min, allowed_ip_cidrs
-                FROM api_keys
-                WHERE id = ?
-                """,
-                (context.api_key_id,),
-            ).fetchone()
-
-        if row is None:
-            raise HTTPException(status_code=401, detail="invalid api key")
-
-        if not self._request_ip_allowed(ip, row["allowed_ip_cidrs"]):
+        if not self._request_ip_allowed(ip, context.allowed_ip_cidrs):
             raise HTTPException(status_code=403, detail="api key ip not allowed")
 
         now_monotonic = monotonic()
-        rate_limit_per_min = int(row["rate_limit_per_min"])
+        rate_limit_per_min = int(context.rate_limit_per_min)
         should_persist = False
         if rate_limit_per_min > 0:
             cutoff = now_monotonic - 60
@@ -572,7 +559,8 @@ class ApiKeyService:
             secret_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
             if not hmac.compare_digest(secret_hash, row["secret_hash"]):
                 raise LookupError("invalid api key")
-            if request_ip is not None and not self._request_ip_allowed(request_ip, row["allowed_ip_cidrs"]):
+            allowed_ip_cidrs = self._decode_allowed_ip_cidrs(row["allowed_ip_cidrs"])
+            if request_ip is not None and not self._request_ip_allowed(request_ip, allowed_ip_cidrs):
                 raise LookupError("api key ip not allowed")
 
             scope_rows = connection.execute(
@@ -611,6 +599,8 @@ class ApiKeyService:
             public_id=str(row["public_id"]),
             name=str(row["name"]),
             kind=str(row["kind"]),
+            rate_limit_per_min=int(row["rate_limit_per_min"]),
+            allowed_ip_cidrs=tuple(allowed_ip_cidrs),
         )
 
     def compare_public_api_key(self, candidate: object) -> bool:
@@ -700,8 +690,8 @@ class ApiKeyService:
             normalized_values.append(canonical)
         return tuple(normalized_values)
 
-    def _request_ip_allowed(self, request_ip: str | None, allowed_ip_cidrs_raw: str | None) -> bool:
-        if not allowed_ip_cidrs_raw:
+    def _request_ip_allowed(self, request_ip: str | None, allowed_ip_cidrs: Sequence[str] | None) -> bool:
+        if not allowed_ip_cidrs:
             return True
         if request_ip is None:
             return False
@@ -710,18 +700,6 @@ class ApiKeyService:
             request_address = ipaddress.ip_address(request_ip)
         except ValueError:
             return False
-
-        try:
-            allowed_cidrs = json.loads(allowed_ip_cidrs_raw)
-        except json.JSONDecodeError:
-            return False
-
-        if isinstance(allowed_cidrs, str):
-            allowed_cidrs = [allowed_cidrs]
-        if not isinstance(allowed_cidrs, list):
-            return False
-        if not allowed_cidrs:
-            return True
 
         for allowed_cidr in allowed_cidrs:
             try:

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.auth.permissions import PermissionContext
 from app.db.connection import connect_database
 
 
@@ -252,6 +253,44 @@ async def test_public_key_coalesces_usage_persistence(app_client, runtime, sampl
 
     assert first_row["last_used_at"] == "2026-05-19T00:00:00Z"
     assert second_row["last_used_at"] == first_row["last_used_at"]
+
+
+@pytest.mark.asyncio
+async def test_record_usage_uses_permission_context_metadata(runtime, monkeypatch) -> None:
+    context = PermissionContext(
+        scopes=("public.read",),
+        domain_ids=(),
+        mailbox_patterns=("foo@adb.com",),
+        api_key_id=123,
+        public_id="ak_test",
+        name="usage-test",
+        kind="public",
+        rate_limit_per_min=1,
+        allowed_ip_cidrs=("127.0.0.1/32",),
+    )
+    captured: dict[str, object] = {}
+
+    def forbidden_connect_database(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("record_usage should not requery api_keys")
+
+    async def fake_execute(operation):  # type: ignore[no-untyped-def]
+        captured["called"] = True
+
+        class FakeConnection:
+            def execute(self, sql, params):  # type: ignore[no-untyped-def]
+                captured["sql"] = sql
+                captured["params"] = params
+                return None
+
+        return operation(FakeConnection())
+
+    monkeypatch.setattr("app.auth.api_keys.connect_database", forbidden_connect_database)
+    monkeypatch.setattr(runtime.api_keys.writer, "execute", fake_execute)
+
+    await runtime.api_keys.record_usage(context, ip="127.0.0.1")
+
+    assert captured["called"] is True
+    assert "UPDATE api_keys" in str(captured["sql"])
 
 
 @pytest.mark.asyncio
