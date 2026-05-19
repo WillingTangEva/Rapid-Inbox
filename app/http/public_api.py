@@ -22,14 +22,17 @@ async def require_public_api_key(request: Request, api_key: str | None, query_ap
         raise HTTPException(status_code=401, detail="invalid api key")
 
     transport = "header" if api_key else "query"
-    try:
-        context = await asyncio.to_thread(
-            request.app.state.runtime.api_keys.authenticate_public_credential,
-            credential,
-            transport=transport,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=401, detail="invalid api key") from exc
+    key_service = request.app.state.runtime.api_keys
+    context = key_service.get_cached_public_credential(credential, transport=transport)
+    if context is None:
+        try:
+            context = await asyncio.to_thread(
+                key_service.authenticate_public_credential,
+                credential,
+                transport=transport,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=401, detail="invalid api key") from exc
     set_active_permission_context(context)
 
 

@@ -1522,46 +1522,19 @@ class RapidInboxRuntime:
         if match is None:
             raise LookupError("mailbox domain not managed")
 
-        mailbox = await self._load_public_mailbox(match, request_ip=request_ip)
-        if mailbox["id"] is None:
-            return {
-                "mailbox": match.address_canonical,
-                "items": [],
-                "message_count": 0,
-                "limit": limit,
-                "offset": offset,
-                "pagination_mode": "offset",
-                "next_cursor": None,
-                "has_previous": False,
-                "has_next": False,
-                "previous_offset": None,
-                "next_offset": None,
-            }
-
-        rows = await asyncio.to_thread(
-            self._load_mailbox_verification_code_rows,
-            int(mailbox["id"]),
-            limit=limit,
-            offset=offset,
+        result = await asyncio.to_thread(
+            self._load_mailbox_verification_code_result,
+            match.address_canonical,
+            match.domain_id,
+            limit,
+            offset,
         )
-        items = [dict(row) for row in rows]
-        message_count = int(mailbox["message_count"])
-        has_previous = offset > 0
-        has_next = offset + len(items) < message_count
-
-        return {
-            "mailbox": match.address_canonical,
-            "items": items,
-            "message_count": message_count,
-            "limit": limit,
-            "offset": offset,
-            "pagination_mode": "offset",
-            "next_cursor": None,
-            "has_previous": has_previous,
-            "has_next": has_next,
-            "previous_offset": max(offset - limit, 0) if has_previous else None,
-            "next_offset": offset + limit if has_next else None,
-        }
+        await self._authorize_public_mailbox_access(
+            match.address_canonical,
+            match.domain_id,
+            request_ip=request_ip,
+        )
+        return result
 
     async def get_delivery_verification_code(
         self,
@@ -1614,6 +1587,102 @@ class RapidInboxRuntime:
             }
 
         return dict(mailbox)
+
+    def _empty_mailbox_verification_code_result(
+        self,
+        mailbox_address: str,
+        *,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        return {
+            "mailbox": mailbox_address,
+            "items": [],
+            "message_count": 0,
+            "limit": limit,
+            "offset": offset,
+            "pagination_mode": "offset",
+            "next_cursor": None,
+            "has_previous": False,
+            "has_next": False,
+            "previous_offset": None,
+            "next_offset": None,
+        }
+
+    def _load_mailbox_verification_code_result(
+        self,
+        mailbox_address: str,
+        domain_id: int,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        with connect_database(self.settings.database_path) as connection:
+            domain = connection.execute(
+                """
+                SELECT public_api_enabled
+                FROM domains
+                WHERE id = ? AND is_active = 1
+                """,
+                (domain_id,),
+            ).fetchone()
+            if domain is None:
+                raise LookupError("mailbox domain not managed")
+            if not bool(domain["public_api_enabled"]):
+                raise LookupError("public api disabled")
+
+            mailbox = connection.execute(
+                """
+                SELECT id, message_count, public_enabled, is_hidden
+                FROM mailboxes
+                WHERE address_canonical = ?
+                """,
+                (mailbox_address,),
+            ).fetchone()
+            if mailbox is None:
+                return self._empty_mailbox_verification_code_result(
+                    mailbox_address,
+                    limit=limit,
+                    offset=offset,
+                )
+            if not bool(mailbox["public_enabled"]) or bool(mailbox["is_hidden"]):
+                raise LookupError("mailbox not public")
+
+            rows = connection.execute(
+                """
+                SELECT
+                    d.id AS delivery_id,
+                    m.id AS message_id,
+                    d.delivered_at AS received_at,
+                    m.subject,
+                    m.from_addr,
+                    m.parse_status,
+                    m.verification_code
+                FROM message_deliveries AS d
+                JOIN messages AS m ON m.id = d.message_id
+                WHERE d.mailbox_id = ? AND d.status = 'active'
+                ORDER BY d.delivered_at DESC, d.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (int(mailbox["id"]), limit, offset),
+            ).fetchall()
+
+        items = [dict(row) for row in rows]
+        message_count = int(mailbox["message_count"])
+        has_previous = offset > 0
+        has_next = offset + len(items) < message_count
+        return {
+            "mailbox": mailbox_address,
+            "items": items,
+            "message_count": message_count,
+            "limit": limit,
+            "offset": offset,
+            "pagination_mode": "offset",
+            "next_cursor": None,
+            "has_previous": has_previous,
+            "has_next": has_next,
+            "previous_offset": max(offset - limit, 0) if has_previous else None,
+            "next_offset": offset + limit if has_next else None,
+        }
 
     def _load_public_mailbox_row(self, mailbox_address: str) -> sqlite3.Row | None:
         with connect_database(self.settings.database_path) as connection:

@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS message_deliveries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_message_deliveries_mailbox_time ON message_deliveries(mailbox_id, delivered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_message_deliveries_mailbox_status_time_id ON message_deliveries(mailbox_id, status, delivered_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_message_deliveries_message ON message_deliveries(message_id);
 CREATE INDEX IF NOT EXISTS idx_message_deliveries_status_time ON message_deliveries(status, delivered_at DESC);
 CREATE INDEX IF NOT EXISTS idx_message_deliveries_rcpt_to ON message_deliveries(rcpt_to, delivered_at DESC);

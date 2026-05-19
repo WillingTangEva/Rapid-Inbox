@@ -336,9 +336,8 @@ class MessageService:
         offset: int = 0,
         request_ip: str | None = None,
     ) -> dict[str, Any]:
-        canonical_mailbox_address = await self._require_public_surface_enabled(mailbox_address, "api")
         return await self._runtime.list_mailbox_verification_codes(
-            canonical_mailbox_address,
+            mailbox_address,
             limit=limit,
             offset=offset,
             request_ip=request_ip,

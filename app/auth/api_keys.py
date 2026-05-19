@@ -26,6 +26,7 @@ from .permissions import PermissionContext
 VALID_API_KEY_KINDS = {"admin", "public", "service"}
 VALID_API_KEY_STATUSES = {"active", "revoked", "expired", "disabled"}
 USAGE_PERSIST_INTERVAL_SECONDS = 60.0
+AUTH_CACHE_TTL_SECONDS = 10.0
 _UNSET = object()
 _ACTIVE_PERMISSION_CONTEXT: ContextVar[PermissionContext | None] = ContextVar(
     "active_permission_context",
@@ -68,6 +69,8 @@ class ApiKeyService:
         self._usage_lock = threading.Lock()
         self._usage_windows: dict[int, deque[float]] = {}
         self._usage_last_persisted: dict[int, tuple[float, str | None]] = {}
+        self._auth_cache_lock = threading.Lock()
+        self._public_auth_cache: dict[str, tuple[float, PermissionContext]] = {}
 
     def configure_legacy_public_api_key(self, legacy_token: str, *, enabled: bool = True) -> PublicAPIKeyProxy:
         self._legacy_public_api_key = legacy_token if enabled else None
@@ -85,6 +88,49 @@ class ApiKeyService:
             else None
         )
         return PublicAPIKeyProxy(legacy_token, self)
+
+    def get_cached_public_credential(self, plain_text: str, *, transport: str) -> PermissionContext | None:
+        if (
+            self._legacy_public_api_key is not None
+            and self._legacy_public_context is not None
+            and hmac.compare_digest(plain_text, self._legacy_public_api_key)
+        ):
+            return self._legacy_public_context
+
+        cache_key = self._public_auth_cache_key(plain_text, transport)
+        now = monotonic()
+        with self._auth_cache_lock:
+            cached = self._public_auth_cache.get(cache_key)
+            if cached is None:
+                return None
+            expires_at, context = cached
+            if expires_at > now:
+                return context
+            self._public_auth_cache.pop(cache_key, None)
+        return None
+
+    def _cache_public_credential(self, plain_text: str, *, transport: str, context: PermissionContext) -> None:
+        if context.kind != "public":
+            return
+        cache_key = self._public_auth_cache_key(plain_text, transport)
+        with self._auth_cache_lock:
+            self._public_auth_cache[cache_key] = (monotonic() + AUTH_CACHE_TTL_SECONDS, context)
+
+    def _clear_auth_cache(self, api_key_id: int | None = None) -> None:
+        with self._auth_cache_lock:
+            if api_key_id is None:
+                self._public_auth_cache.clear()
+                return
+            stale_keys = [
+                cache_key
+                for cache_key, (_, context) in self._public_auth_cache.items()
+                if context.api_key_id == api_key_id
+            ]
+            for cache_key in stale_keys:
+                self._public_auth_cache.pop(cache_key, None)
+
+    def _public_auth_cache_key(self, plain_text: str, transport: str) -> str:
+        return hashlib.sha256(f"{transport}\0{plain_text}".encode("utf-8")).hexdigest()
 
     async def create_key(
         self,
@@ -351,6 +397,7 @@ class ApiKeyService:
         ):
             with self._usage_lock:
                 self._usage_windows.pop(api_key_id, None)
+        self._clear_auth_cache(api_key_id)
         return updated
 
     async def delete_key(self, api_key_id: int) -> dict[str, Any]:
@@ -373,6 +420,7 @@ class ApiKeyService:
         deleted = await self.writer.execute(operation)
         with self._usage_lock:
             self._usage_windows.pop(api_key_id, None)
+        self._clear_auth_cache(api_key_id)
         return deleted
 
     async def revoke_key(self, api_key_id: int) -> dict[str, Any]:
@@ -408,6 +456,7 @@ class ApiKeyService:
         revoked = await self.writer.execute(operation)
         with self._usage_lock:
             self._usage_windows.pop(api_key_id, None)
+        self._clear_auth_cache(api_key_id)
         return revoked
 
     async def rotate_key(self, api_key_id: int) -> dict[str, Any]:
@@ -446,6 +495,7 @@ class ApiKeyService:
         rotated = await self.writer.execute(operation)
         with self._usage_lock:
             self._usage_windows.pop(api_key_id, None)
+        self._clear_auth_cache(api_key_id)
         return rotated
 
     def authenticate_plain_text(self, plain_text: str, *, request_ip: str | None = None) -> PermissionContext:
@@ -461,13 +511,13 @@ class ApiKeyService:
         transport: str,
         request_ip: str | None = None,
     ) -> PermissionContext:
-        if (
-            self._legacy_public_api_key is not None
-            and self._legacy_public_context is not None
-            and hmac.compare_digest(plain_text, self._legacy_public_api_key)
-        ):
-            return self._legacy_public_context
-        return self._authenticate_plain_text(plain_text, transport=transport, request_ip=request_ip)
+        cached_context = self.get_cached_public_credential(plain_text, transport=transport)
+        if cached_context is not None:
+            return cached_context
+
+        context = self._authenticate_plain_text(plain_text, transport=transport, request_ip=request_ip)
+        self._cache_public_credential(plain_text, transport=transport, context=context)
+        return context
 
     async def record_usage(self, context: PermissionContext, *, ip: str | None = None) -> None:
         if context.api_key_id is None:
