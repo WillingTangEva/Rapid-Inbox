@@ -25,6 +25,7 @@ from .permissions import PermissionContext
 
 VALID_API_KEY_KINDS = {"admin", "public", "service"}
 VALID_API_KEY_STATUSES = {"active", "revoked", "expired", "disabled"}
+USAGE_PERSIST_INTERVAL_SECONDS = 60.0
 _UNSET = object()
 _ACTIVE_PERMISSION_CONTEXT: ContextVar[PermissionContext | None] = ContextVar(
     "active_permission_context",
@@ -66,6 +67,7 @@ class ApiKeyService:
         self._legacy_public_context: PermissionContext | None = None
         self._usage_lock = threading.Lock()
         self._usage_windows: dict[int, deque[float]] = {}
+        self._usage_last_persisted: dict[int, tuple[float, str | None]] = {}
 
     def configure_legacy_public_api_key(self, legacy_token: str, *, enabled: bool = True) -> PublicAPIKeyProxy:
         self._legacy_public_api_key = legacy_token if enabled else None
@@ -487,9 +489,10 @@ class ApiKeyService:
         if not self._request_ip_allowed(ip, row["allowed_ip_cidrs"]):
             raise HTTPException(status_code=403, detail="api key ip not allowed")
 
+        now_monotonic = monotonic()
         rate_limit_per_min = int(row["rate_limit_per_min"])
+        should_persist = False
         if rate_limit_per_min > 0:
-            now_monotonic = monotonic()
             cutoff = now_monotonic - 60
             with self._usage_lock:
                 window = self._usage_windows.setdefault(context.api_key_id, deque())
@@ -498,6 +501,19 @@ class ApiKeyService:
                 if len(window) >= rate_limit_per_min:
                     raise HTTPException(status_code=429, detail="api key rate limit exceeded")
                 window.append(now_monotonic)
+
+        with self._usage_lock:
+            last_persisted = self._usage_last_persisted.get(context.api_key_id)
+            if (
+                last_persisted is None
+                or now_monotonic - last_persisted[0] >= USAGE_PERSIST_INTERVAL_SECONDS
+                or last_persisted[1] != ip
+            ):
+                self._usage_last_persisted[context.api_key_id] = (now_monotonic, ip)
+                should_persist = True
+
+        if not should_persist:
+            return
 
         now = utc_now()
         await self.writer.execute(

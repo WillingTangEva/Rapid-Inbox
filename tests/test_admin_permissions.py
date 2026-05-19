@@ -193,6 +193,68 @@ async def test_public_key_records_request_ip(app_client, runtime, sample_email_b
 
 
 @pytest.mark.asyncio
+async def test_public_key_coalesces_usage_persistence(app_client, runtime, sample_email_bytes, monkeypatch) -> None:
+    await runtime.create_domain("adb.com")
+    await runtime.ensure_smtp_session(
+        "smtp_usage_coalesce",
+        SimpleNamespace(peer=("127.0.0.1", 2525), host_name="pytest", ssl=None),
+    )
+    key = await runtime.api_keys.create_key(
+        name="usage-coalesce",
+        kind="public",
+        scopes=["public.read"],
+        domain_ids=[],
+        mailbox_patterns=["foo@adb.com"],
+        rate_limit_per_min=0,
+    )
+    await runtime.accept_message(
+        rcpt_tos=["foo@adb.com"],
+        envelope_from="sender@example.com",
+        content=sample_email_bytes,
+        smtp_session_id="smtp_usage_coalesce",
+    )
+    await runtime.drain_parser_queue()
+
+    monotonic_value = 1000.0
+
+    def fake_monotonic() -> float:
+        nonlocal monotonic_value
+        monotonic_value += 1.0
+        return monotonic_value
+
+    utc_values = iter(["2026-05-19T00:00:00Z", "2026-05-19T00:00:30Z"])
+    monkeypatch.setattr("app.auth.api_keys.monotonic", fake_monotonic)
+    monkeypatch.setattr("app.auth.api_keys.utc_now", lambda: next(utc_values))
+
+    first_response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+    assert first_response.status_code == 200
+
+    with connect_database(runtime.settings.database_path) as connection:
+        first_row = connection.execute(
+            "SELECT last_used_at FROM api_keys WHERE id = ?",
+            (key["id"],),
+        ).fetchone()
+
+    second_response = await app_client.get(
+        "/api/v1/public/mailboxes/foo@adb.com/messages",
+        headers={"X-API-Key": key["plain_text"]},
+    )
+    assert second_response.status_code == 200
+
+    with connect_database(runtime.settings.database_path) as connection:
+        second_row = connection.execute(
+            "SELECT last_used_at FROM api_keys WHERE id = ?",
+            (key["id"],),
+        ).fetchone()
+
+    assert first_row["last_used_at"] == "2026-05-19T00:00:00Z"
+    assert second_row["last_used_at"] == first_row["last_used_at"]
+
+
+@pytest.mark.asyncio
 async def test_public_key_ip_restriction_blocks_disallowed_client_ip(app_client, runtime, sample_email_bytes) -> None:
     await runtime.create_domain("adb.com")
     await runtime.ensure_smtp_session(
