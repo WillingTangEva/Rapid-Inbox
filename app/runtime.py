@@ -80,7 +80,8 @@ class RapidInboxRuntime:
         await self.parse_queue.start()
         await self.recovery.run()
         self.domains.reload()
-        self._retention_cleanup_task = asyncio.create_task(self._message_retention_loop())
+        if self.settings.retention_cleanup_enabled:
+            self._retention_cleanup_task = asyncio.create_task(self._message_retention_loop())
         self._pending_parse_scan_task = asyncio.create_task(self._pending_parse_scan_loop())
 
     async def stop(self) -> None:

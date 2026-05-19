@@ -50,6 +50,7 @@ def test_default_settings_loads_values_from_dotenv(tmp_path: Path) -> None:
                 "SMTP_CLOSE_AFTER_DATA=false",
                 "PARSE_WORKER_COUNT=7",
                 "FSYNC_STORAGE_WRITES=true",
+                "RETENTION_CLEANUP_ENABLED=false",
                 "ADMIN_TOKEN=admin-token-1",
                 "PUBLIC_API_KEY=public-token-1",
             ]
@@ -73,6 +74,7 @@ def test_default_settings_loads_values_from_dotenv(tmp_path: Path) -> None:
     assert settings.smtp_close_after_data is False
     assert settings.parse_worker_count == 7
     assert settings.fsync_storage_writes is True
+    assert settings.retention_cleanup_enabled is False
     assert settings.admin_token == "admin-token-1"
     assert settings.public_api_key == "public-token-1"
     assert settings.legacy_admin_token_enabled is True

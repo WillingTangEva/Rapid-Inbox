@@ -33,6 +33,7 @@ class Settings:
     parse_worker_count: int = 4
     fsync_storage_writes: bool = False
     disk_warning_threshold_percent: int = 85
+    retention_cleanup_enabled: bool = True
     admin_token: str = DEFAULT_ADMIN_TOKEN
     public_api_key: str = DEFAULT_PUBLIC_API_KEY
     legacy_admin_token_enabled: bool = True
@@ -211,6 +212,7 @@ def default_settings(base_dir: Path) -> Settings:
         parse_worker_count=_coerce_int(merged, "PARSE_WORKER_COUNT", 4),
         fsync_storage_writes=_coerce_bool(merged, "FSYNC_STORAGE_WRITES", False),
         disk_warning_threshold_percent=_coerce_int(merged, "DISK_WARNING_THRESHOLD_PERCENT", 85),
+        retention_cleanup_enabled=_coerce_bool(merged, "RETENTION_CLEANUP_ENABLED", True),
         admin_token=admin_token,
         public_api_key=public_api_key,
         legacy_admin_token_enabled=_legacy_secret_enabled(admin_token, DEFAULT_ADMIN_TOKEN),
