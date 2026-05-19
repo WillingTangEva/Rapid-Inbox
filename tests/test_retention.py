@@ -26,6 +26,16 @@ def _attachment_email_bytes() -> bytes:
     return message.as_bytes()
 
 
+def _plain_email_bytes(message_id: str, subject: str) -> bytes:
+    message = EmailMessage()
+    message["From"] = "Sender <sender@example.com>"
+    message["To"] = "Foo <foo@adb.com>"
+    message["Subject"] = subject
+    message["Message-ID"] = f"<{message_id}>"
+    message.set_content("This message should expire.")
+    return message.as_bytes()
+
+
 @pytest.mark.asyncio
 async def test_message_retention_deletes_expired_mail_rows_and_files(tmp_path, monkeypatch) -> None:
     settings = Settings(
@@ -96,6 +106,61 @@ async def test_message_retention_deletes_expired_mail_rows_and_files(tmp_path, m
 
         assert counts == {"messages": 0, "deliveries": 0, "attachments": 0, "metrics": 1}
         assert mailbox is None
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_message_retention_deletes_expired_messages_in_batches(tmp_path, monkeypatch) -> None:
+    settings = Settings(
+        storage_root=tmp_path / "storage",
+        database_path=tmp_path / "storage" / "app.db",
+    )
+    runtime = RapidInboxRuntime(settings)
+
+    await runtime.start()
+    try:
+        monkeypatch.setattr(runtime_module, "RETENTION_DELETE_BATCH_SIZE", 1)
+        monkeypatch.setattr(runtime_module, "utc_now", lambda: "2026-04-18T20:00:00Z")
+        await runtime.create_domain("adb.com")
+        await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="sender@example.com",
+            content=_plain_email_bytes("first-batched-expiring@example.com", "First expiring message"),
+        )
+        await runtime.accept_message(
+            rcpt_tos=["foo@adb.com"],
+            envelope_from="sender@example.com",
+            content=_plain_email_bytes("second-batched-expiring@example.com", "Second expiring message"),
+        )
+        await runtime.drain_parser_queue()
+
+        monkeypatch.setattr(runtime_module, "utc_now", lambda: "2026-04-18T20:10:00Z")
+        first = await runtime.cleanup_expired_messages()
+
+        assert first["messages"] == 1
+        assert first["deliveries"] == 1
+        assert first["mailboxes"] == 0
+
+        with connect_database(settings.database_path) as connection:
+            remaining_messages = connection.execute("SELECT COUNT(*) AS count FROM messages").fetchone()["count"]
+            mailbox = connection.execute("SELECT message_count FROM mailboxes").fetchone()
+
+        assert remaining_messages == 1
+        assert mailbox["message_count"] == 1
+
+        second = await runtime.cleanup_expired_messages()
+
+        assert second["messages"] == 1
+        assert second["deliveries"] == 1
+        assert second["mailboxes"] == 1
+
+        with connect_database(settings.database_path) as connection:
+            remaining_messages = connection.execute("SELECT COUNT(*) AS count FROM messages").fetchone()["count"]
+            remaining_mailboxes = connection.execute("SELECT COUNT(*) AS count FROM mailboxes").fetchone()["count"]
+
+        assert remaining_messages == 0
+        assert remaining_mailboxes == 0
     finally:
         await runtime.stop()
 

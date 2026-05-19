@@ -34,6 +34,7 @@ from app.smtp.matcher import DomainMatcher, DomainRule
 MESSAGE_RETENTION_SECONDS = 10 * 60
 MESSAGE_RETENTION_CLEANUP_INTERVAL_SECONDS = 30
 METRIC_RETENTION_SECONDS = 48 * 60 * 60
+RETENTION_DELETE_BATCH_SIZE = 250
 PENDING_PARSE_SCAN_INTERVAL_SECONDS = 0.5
 PENDING_PARSE_SCAN_BATCH_SIZE = 5000
 
@@ -339,45 +340,47 @@ class RapidInboxRuntime:
             FROM messages
             WHERE received_at <= ?
             ORDER BY received_at ASC, id ASC
+            LIMIT ?
             """,
-            (cutoff,),
+            (cutoff, RETENTION_DELETE_BATCH_SIZE),
         ).fetchall()
         if not message_rows:
             return {**self._empty_retention_result(), "storage_paths": []}
 
+        message_ids = [str(row["id"]) for row in message_rows]
+        placeholders = ", ".join("?" for _ in message_ids)
+        message_id_params = tuple(message_ids)
+
         delivery_count = int(
             connection.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS count
-                FROM message_deliveries AS d
-                JOIN messages AS m ON m.id = d.message_id
-                WHERE m.received_at <= ?
+                FROM message_deliveries
+                WHERE message_id IN ({placeholders})
                 """,
-                (cutoff,),
+                message_id_params,
             ).fetchone()["count"]
         )
         mailbox_ids = [
             int(row["mailbox_id"])
             for row in connection.execute(
-                """
+                f"""
                 SELECT DISTINCT d.mailbox_id
                 FROM message_deliveries AS d
-                JOIN messages AS m ON m.id = d.message_id
-                WHERE m.received_at <= ?
+                WHERE d.message_id IN ({placeholders})
                 ORDER BY d.mailbox_id ASC
                 """,
-                (cutoff,),
+                message_id_params,
             ).fetchall()
         ]
         attachment_rows = connection.execute(
-            """
+            f"""
             SELECT a.storage_path
             FROM attachments AS a
-            JOIN messages AS m ON m.id = a.message_id
-            WHERE m.received_at <= ?
+            WHERE a.message_id IN ({placeholders})
             ORDER BY a.message_id ASC, a.part_index ASC
             """,
-            (cutoff,),
+            message_id_params,
         ).fetchall()
 
         storage_paths: list[str] = []
@@ -396,7 +399,10 @@ class RapidInboxRuntime:
                     storage_paths.append(str(path_value))
         storage_paths.extend(str(row["storage_path"]) for row in attachment_rows)
 
-        connection.execute("DELETE FROM messages WHERE received_at <= ?", (cutoff,))
+        connection.execute(
+            f"DELETE FROM messages WHERE id IN ({placeholders})",
+            message_id_params,
+        )
         deleted_mailboxes = 0
         for mailbox_id in mailbox_ids:
             if self._refresh_mailbox_summary_after_message_delete(connection, mailbox_id):
@@ -469,16 +475,18 @@ class RapidInboxRuntime:
             SELECT id
             FROM smtp_sessions
             WHERE {where_clause}
+            ORDER BY connect_at ASC, id ASC
+            LIMIT ?
             """,
-            tuple(params),
+            tuple(params) + (RETENTION_DELETE_BATCH_SIZE,),
         ).fetchall()
-        connection.execute(
-            f"""
-            DELETE FROM smtp_sessions
-            WHERE {where_clause}
-            """,
-            tuple(params),
-        )
+        if rows:
+            session_ids = [str(row["id"]) for row in rows]
+            placeholders = ", ".join("?" for _ in session_ids)
+            connection.execute(
+                f"DELETE FROM smtp_sessions WHERE id IN ({placeholders})",
+                tuple(session_ids),
+            )
         return len(rows)
 
     def _delete_empty_mailboxes_at_or_before(self, connection: sqlite3.Connection, cutoff: str) -> int:
@@ -488,33 +496,24 @@ class RapidInboxRuntime:
             FROM mailboxes AS mb
             WHERE mb.message_count = 0
               AND mb.latest_message_at IS NULL
-              AND mb.last_seen_at <= ?
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM message_deliveries AS d
-                  WHERE d.mailbox_id = mb.id
-              )
-            """,
-            (cutoff,),
-        ).fetchall()
-        connection.execute(
-            """
-            DELETE FROM mailboxes
-            WHERE id IN (
-                SELECT mb.id
-                FROM mailboxes AS mb
-                WHERE mb.message_count = 0
-                  AND mb.latest_message_at IS NULL
                   AND mb.last_seen_at <= ?
                   AND NOT EXISTS (
                       SELECT 1
                       FROM message_deliveries AS d
                       WHERE d.mailbox_id = mb.id
                   )
-            )
+                ORDER BY mb.last_seen_at ASC, mb.id ASC
+                LIMIT ?
             """,
-            (cutoff,),
-        )
+            (cutoff, RETENTION_DELETE_BATCH_SIZE),
+        ).fetchall()
+        if rows:
+            mailbox_ids = [int(row["id"]) for row in rows]
+            placeholders = ", ".join("?" for _ in mailbox_ids)
+            connection.execute(
+                f"DELETE FROM mailboxes WHERE id IN ({placeholders})",
+                tuple(mailbox_ids),
+            )
         return len(rows)
 
     def _expired_empty_mailbox_count(self, cutoff: str) -> int:
@@ -544,12 +543,25 @@ class RapidInboxRuntime:
         return cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     def _delete_metric_buckets_before(self, connection: sqlite3.Connection, cutoff: str) -> int:
-        row = connection.execute(
-            "SELECT COUNT(*) AS count FROM mail_metric_buckets WHERE bucket_ts < ?",
-            (cutoff,),
-        ).fetchone()
-        connection.execute("DELETE FROM mail_metric_buckets WHERE bucket_ts < ?", (cutoff,))
-        return 0 if row is None else int(row["count"])
+        rows = connection.execute(
+            """
+            SELECT bucket_ts
+            FROM mail_metric_buckets
+            WHERE bucket_ts < ?
+            ORDER BY bucket_ts ASC
+            LIMIT ?
+            """,
+            (cutoff, RETENTION_DELETE_BATCH_SIZE),
+        ).fetchall()
+        if not rows:
+            return 0
+        bucket_ts_values = [str(bucket_row["bucket_ts"]) for bucket_row in rows]
+        placeholders = ", ".join("?" for _ in bucket_ts_values)
+        connection.execute(
+            f"DELETE FROM mail_metric_buckets WHERE bucket_ts IN ({placeholders})",
+            tuple(bucket_ts_values),
+        )
+        return len(rows)
 
     def _expired_metric_bucket_count(self, cutoff: str) -> int:
         with connect_database(self.settings.database_path) as connection:
